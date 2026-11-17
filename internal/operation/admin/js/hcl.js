@@ -886,8 +886,11 @@ export function formatHCL(src) {
             indent = Math.max(0, indent - 1);
             out = out.trimEnd();
             out += '\n' + ind() + '}';
-            needIndent = false;
-            lastWasNewline = true;
+            needIndent = true;
+            // The source newline after a closing brace is still meaningful.
+            // Setting this true suppressed it and glued the next block to the
+            // brace (e.g. "}route \"/\" {").
+            lastWasNewline = false;
             lastTokenType = t.type;
             inBlock = false;
             continue;

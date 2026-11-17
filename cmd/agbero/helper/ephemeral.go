@@ -32,18 +32,18 @@ func (e *Ephemeral) Serve() {
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		e.p.Logger.Errorf("error resolving path: %v\n", err)
+		e.p.UI().Errorf("error resolving path: %v\n", err)
 		os.Exit(1)
 	}
 	stat, err := os.Stat(absPath)
 	if err != nil || !stat.IsDir() {
-		e.p.Logger.Errorf("path must be a valid directory: %s\n", absPath)
+		e.p.UI().Errorf("path must be a valid directory: %s\n", absPath)
 		os.Exit(1)
 	}
 
 	finalPort, err := zulu.PortScan(cfg.ServeBind, cfg.ServePort, def.MaxPortRetries)
 	if err != nil {
-		e.p.Logger.Errorf("error: %v\n", err)
+		e.p.UI().Errorf("error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -52,7 +52,7 @@ func (e *Ephemeral) Serve() {
 		// Use memory store for ephemeral mode - no persistence needed
 		ca := setup.NewCA(ctx)
 		if err := ca.PromptAndInstall(); err != nil {
-			e.p.Logger.Warn("CA installation prompt interrupted: ", err)
+			e.p.UI().Warn("CA installation prompt interrupted: ", err)
 		}
 	}
 
@@ -98,8 +98,7 @@ func (e *Ephemeral) Serve() {
 func (e *Ephemeral) Proxy() {
 	cfg := e.p.Cfg
 	if cfg.ProxyTarget == "" {
-		e.p.Logger.Println("error: target required (e.g., :3000 or http://127.0.0.1:3000)")
-		os.Exit(1)
+		e.p.UI().Abort("target required (e.g., :3000 or http://127.0.0.1:3000)")
 	}
 
 	target := cfg.ProxyTarget
@@ -128,7 +127,7 @@ func (e *Ephemeral) Proxy() {
 
 	finalPort, err := zulu.PortScan(cfg.ProxyBind, port, def.MaxPortRetries)
 	if err != nil {
-		e.p.Logger.Errorf("error: %v\n", err)
+		e.p.UI().Errorf("error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -136,7 +135,7 @@ func (e *Ephemeral) Proxy() {
 	if cfg.ProxyHTTPS {
 		ca := setup.NewCA(ctx)
 		if err := ca.PromptAndInstall(); err != nil {
-			e.p.Logger.Warn("CA installation prompt interrupted: ", err)
+			e.p.UI().Warn("CA installation prompt interrupted: ", err)
 		}
 	}
 
@@ -197,17 +196,14 @@ func (e *Ephemeral) run(global *alaye.Global, hosts map[string]*alaye.Host) {
 
 	go func() {
 		if err := srv.Start(""); err != nil {
-			e.p.Logger.Error(err)
+			e.p.UI().Error(err)
 			e.p.Shutdown.TriggerShutdown()
 		}
 	}()
 
 	stats := e.p.Shutdown.Wait()
-	e.p.Logger.Fields(
-		"duration", stats.EndTime.Sub(stats.StartTime),
-		"tasks_total", stats.TotalEvents,
-		"tasks_failed", stats.FailedEvents,
-	).Info("agbero stopped gracefully")
+	e.p.UI().Done("agbero stopped gracefully")
+	e.p.UI().Infof("%d tasks, %d failed", stats.TotalEvents, stats.FailedEvents)
 }
 
 func buildURL(useHTTPS bool, domain string, port int) string {

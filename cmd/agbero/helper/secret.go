@@ -18,7 +18,7 @@ type Secret struct {
 // used by the Keeper helper — all methods that need auth call this first.
 func (s *Secret) requireStore() *keeperlib.Keeper {
 	if s.p.Store == nil {
-		s.p.Logger.Fatal("keeper is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
+		s.p.UI().Abort("keeper is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
 	}
 	return s.p.Store
 }
@@ -30,7 +30,7 @@ func (s *Secret) Cluster() {
 	pw := security.NewPassword()
 	key, err := pw.Generate(def.DefaultPasswordLength)
 	if err != nil {
-		s.p.Logger.Fatal("random generation failed: ", err)
+		s.p.UI().Abort("random generation failed: ", err)
 	}
 
 	u := ui.New()
@@ -48,21 +48,21 @@ func (s *Secret) KeyInit(_ string) {
 
 	existing, err := store.Get(expect.Vault().Key("internal"))
 	if err == nil && len(existing) > 0 {
-		s.p.Logger.Warn("internal auth key already exists in keeper — delete it first: agbero keeper delete vault://key/internal")
+		s.p.UI().Warn("internal auth key already exists in keeper — delete it first: agbero keeper delete vault://key/internal")
 		return
 	}
 
 	_, pemBytes, err := security.GeneratePPK()
 	if err != nil {
-		s.p.Logger.Fatal("failed to generate internal auth key: ", err)
+		s.p.UI().Abort("failed to generate internal auth key: ", err)
 	}
 
 	if err := store.EnsureBucket(expect.Vault().Key("internal")); err != nil {
-		s.p.Logger.Fatal("failed to ensure vault key bucket in keeper: ", err)
+		s.p.UI().Abort("failed to ensure vault key bucket in keeper: ", err)
 	}
 
 	if err := store.Set(expect.Vault().Key("internal"), pemBytes); err != nil {
-		s.p.Logger.Fatal("failed to store internal auth key in keeper: ", err)
+		s.p.UI().Abort("failed to store internal auth key in keeper: ", err)
 	}
 
 	u := ui.New()
@@ -77,19 +77,19 @@ func (s *Secret) KeyInit(_ string) {
 // to revoke it later via POST /api/v1/auto/revoke.
 func (s *Secret) Token(_ string, svcName string, ttl time.Duration) {
 	if svcName == "" {
-		s.p.Logger.Fatal("--service name is required")
+		s.p.UI().Abort("--service name is required")
 	}
 
 	store := s.requireStore()
 
 	pemBytes, err := store.Get(expect.Vault().Key("internal"))
 	if err != nil || len(pemBytes) == 0 {
-		s.p.Logger.Fatal("internal auth key not found in keeper — run 'agbero secret key init' first")
+		s.p.UI().Abort("internal auth key not found in keeper — run 'agbero secret key init' first")
 	}
 
 	tm, err := security.LoadPPKFromPEM(pemBytes)
 	if err != nil {
-		s.p.Logger.Fatal("failed to load internal auth key: ", err)
+		s.p.UI().Abort("failed to load internal auth key: ", err)
 	}
 
 	if ttl == 0 {
@@ -98,12 +98,12 @@ func (s *Secret) Token(_ string, svcName string, ttl time.Duration) {
 
 	token, err := tm.Mint(svcName, ttl)
 	if err != nil {
-		s.p.Logger.Fatal("failed to mint token: ", err)
+		s.p.UI().Abort("failed to mint token: ", err)
 	}
 
 	verified, err := tm.Verify(token)
 	if err != nil {
-		s.p.Logger.Fatal("failed to verify minted token: ", err)
+		s.p.UI().Abort("failed to verify minted token: ", err)
 	}
 
 	expires := time.Now().Add(ttl)
@@ -125,7 +125,7 @@ func (s *Secret) Hash(password string) {
 		u := ui.New()
 		result, err := u.PasswordConfirm("Password to hash")
 		if err != nil {
-			s.p.Logger.Fatal("password required: ", err)
+			s.p.UI().Abort("password required: ", err)
 		}
 		password = string(result.Bytes())
 		defer result.Zero()
@@ -134,7 +134,7 @@ func (s *Secret) Hash(password string) {
 	pw := security.NewPassword()
 	hash, err := pw.Hash(password)
 	if err != nil {
-		s.p.Logger.Fatal(err)
+		s.p.UI().Abort(err)
 	}
 
 	u := ui.New()
@@ -152,7 +152,7 @@ func (s *Secret) Password(length int) {
 	pw := security.NewPassword()
 	password, hash, err := pw.Make(length)
 	if err != nil {
-		s.p.Logger.Fatal("failed to generate password: ", err)
+		s.p.UI().Abort("failed to generate password: ", err)
 	}
 
 	u := ui.New()

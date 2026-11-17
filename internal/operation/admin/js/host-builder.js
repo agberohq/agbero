@@ -88,7 +88,55 @@ export function buildHostConfig(data) {
         host.proxies = [buildTcpProxy(data._tcp)];
     }
 
+    applyRelay(host, data);
+
     return host;
+}
+
+// applyRelay adds the relay blocks chosen in the domain step.
+//   relay_mode = 'agent'  → this host is published through a remote relay:
+//                            one agent block + an expose on the first route.
+//   relay_mode = 'server' → this host serves a relay that agents dial.
+// alaye/relay.go is the source of the field names.
+function applyRelay(host, data) {
+    const mode = data.relay_mode || '';
+    if (mode === 'agent') {
+        const name = (data.relay_agent_name || '').trim();
+        const agent = { name, relay: (data.relay_agent_url || '').trim() };
+        const secret = (data.relay_agent_enroll || '').trim();
+        if (secret) agent.enroll = secret;
+        if ((data.relay_agent_local || '').trim()) agent.local = data.relay_agent_local.trim();
+        if (data.relay_agent_local_insecure === true) agent.local_insecure = true;
+        host.agents = [agent];
+
+        const id = (data.relay_expose_id || '').trim();
+        if (id && Array.isArray(host.routes) && host.routes.length) {
+            const ex = { id, via: name, path: data.relay_expose_path !== false, subdomain: data.relay_expose_subdomain === true };
+            const domain = (host.domains || [])[0];
+            if (domain) ex.local_host = domain;
+            host.routes[0].exposes = [ex];
+        }
+    } else if (mode === 'server') {
+        const relay = {
+            name: (data.relay_server_name || 'agents').trim() || 'agents',
+            listen: {
+                address: (data.relay_server_address || '0.0.0.0').trim() || '0.0.0.0',
+                port: Number(data.relay_server_port) || 8443,
+                protocol: 'https',
+            },
+            auth: { method: 'enrollment', token: (data.relay_server_token || '').trim() },
+            policy: {
+                allow_http: data.relay_server_allow_http !== false,
+                allow_subdomain: data.relay_server_allow_subdomain === true,
+                max_agents: Number(data.relay_server_max_agents) || 100,
+                max_streams: Number(data.relay_server_max_streams) || 1000,
+            },
+        };
+        const tcp = _csv(data.relay_server_tcp_ports), udp = _csv(data.relay_server_udp_ports);
+        if (tcp.length) relay.policy.allow_tcp_ports = tcp;
+        if (udp.length) relay.policy.allow_udp_ports = udp;
+        host.relays = [relay];
+    }
 }
 
 function buildTcpProxy(tcp) {
@@ -152,6 +200,7 @@ function buildWebBlock(data) {
     }
     if (data.git_enabled) {
         web.git = { enabled: 'on', url: (data.git_url || '').trim(), branch: (data.git_branch || 'main').trim() };
+        if (data.git_mode?.trim())              web.git.mode              = data.git_mode.trim();
         if (data.git_id?.trim())                web.git.id                = data.git_id.trim();
         if (data.git_secret?.trim())            web.git.secret            = data.git_secret.trim();
         if (data.git_interval?.trim())          web.git.interval          = data.git_interval.trim();
@@ -168,6 +217,35 @@ function buildWebBlock(data) {
                 web.git.auth.ssh_key_passphrase = (data.git_ssh_key_passphrase || '').trim();
             }
         }
+    }
+    if (Array.isArray(data.mounts) && data.mounts.length) {
+        const mounts = data.mounts.map(m => {
+            const mountPath = (m.path || '').trim();
+            if (!mountPath) return null;
+            const out = { path: mountPath };
+            const root = (m.root || '').trim();
+            if (root) out.root = root;
+            if (m.git_enabled) {
+                out.git = { enabled: 'on', url: (m.git_url || '').trim(), branch: (m.git_branch || 'main').trim() };
+                if (m.git_mode?.trim())     out.git.mode     = m.git_mode.trim();
+                if (m.git_id?.trim())       out.git.id       = m.git_id.trim();
+                if (m.git_interval?.trim()) out.git.interval = m.git_interval.trim();
+                if (m.git_secret?.trim())   out.git.secret   = m.git_secret.trim();
+                const authType = (m.git_auth_type || '').trim();
+                if (authType) {
+                    out.git.auth = { type: authType };
+                    if (authType === 'basic') {
+                        out.git.auth.username = (m.git_auth_user || '').trim();
+                        out.git.auth.password = (m.git_auth_pass || '').trim();
+                    } else if (authType === 'ssh-key') {
+                        out.git.auth.ssh_key = (m.git_ssh_key || '').trim();
+                        if (m.git_ssh_key_passphrase?.trim()) out.git.auth.ssh_key_passphrase = m.git_ssh_key_passphrase.trim();
+                    }
+                }
+            }
+            return out;
+        }).filter(Boolean);
+        if (mounts.length) web.mounts = mounts;
     }
     if (data.markdown_enabled) {
         web.markdown = { enabled: 'on' };
@@ -200,8 +278,13 @@ function buildBackendBlock(data) {
         if (mc > 0) out.max_connections = mc;
         return out;
     });
-    const via    = (data.backend_via    || '').trim();
-    const tunnel = (data.backend_tunnel || '').trim();
+    // Only a user-enabled tunnel may contribute via/tunnel values. This keeps
+    // stale draft/admin values from turning into a validation error for a host
+    // that never selected SOCKS5.
+    const tunnelEnabled = data.tunnel_enabled === true ||
+        (data.tunnel_enabled === undefined && !!(data.backend_via || data.backend_tunnel));
+    const via    = tunnelEnabled ? (data.backend_via    || '').trim() : '';
+    const tunnel = tunnelEnabled ? (data.backend_tunnel || '').trim() : '';
     if (via && tunnel) {
         throw new Error('Set either a named tunnel (via) or an inline tunnel URL — not both. ' +
             'Define shared tunnels globally and reference them by name.');
@@ -279,12 +362,21 @@ function buildServerlessBlock(data) {
         const raw = data.serverless_workers;
         workers = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
     } catch { workers = []; }
-    const builtWorkers = workers.filter(w => w.name?.trim() && w.command?.trim()).map(w => {
-        const cmdRaw = w.command.trim();
-        const command = cmdRaw.startsWith('[')
-            ? (() => { try { return JSON.parse(cmdRaw); } catch { return cmdRaw.split(/\s+/); } })()
-            : cmdRaw.split(/\s+/);
-        const entry = { name: w.name.trim(), command };
+    const builtWorkers = workers.map(w => {
+        const name = String(w.name || '').trim();
+        if (!name) return null;
+        let command;
+        if (Array.isArray(w.command)) {
+            command = w.command.map(v => String(v).trim()).filter(Boolean);
+        } else {
+            const cmdRaw = String(w.command || '').trim();
+            if (!cmdRaw) return null;
+            command = cmdRaw.startsWith('[')
+                ? (() => { try { return JSON.parse(cmdRaw); } catch { return cmdRaw.split(/\s+/); } })()
+                : cmdRaw.split(/\s+/);
+        }
+        if (!command || !command.length) return null;
+        const entry = { name, command };
         if (w.landlock !== false)    entry.landlock  = 'on';
         if (w.background)       entry.background = true;
         if (w.run_once)         entry.run_once   = true;
@@ -293,7 +385,7 @@ function buildServerlessBlock(data) {
         if (w.timeout?.trim())  entry.timeout    = w.timeout.trim();
         if (w.engine?.trim())   entry.engine     = w.engine.trim();
         return entry;
-    });
+    }).filter(Boolean);
     if (builtWorkers.length) block.workers = builtWorkers;
 
     return block;
@@ -629,6 +721,10 @@ function _hostToHCL(host) {
         lines.push('', _proxyBlock(proxy));
     }
 
+    // relay server and agent blocks
+    for (const relay of (host.relays || [])) lines.push('', _relayBlock(relay));
+    for (const agent of (host.agents || [])) lines.push('', _agentBlock(agent));
+
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimStart() + '\n';
 }
 
@@ -678,6 +774,7 @@ function _routeBlock(route) {
         if (w.git) {
             const g = w.git;
             const gb = [`enabled = "on"`, `url     = ${_hq(g.url || '')}`, `branch  = ${_hq(g.branch || 'main')}`];
+            if (g.mode)     gb.push(`mode     = ${_hq(g.mode)}`);
             if (g.id)       gb.push(`id       = ${_hq(g.id)}`);
             if (g.interval) gb.push(`interval = ${_hq(g.interval)}`);
             if (g.secret)   gb.push(`secret   = ${_hq(g.secret)}`);
@@ -688,9 +785,37 @@ function _routeBlock(route) {
                 if (g.auth.username) ab.push(`username = ${_hq(g.auth.username)}`);
                 if (g.auth.password) ab.push(`password = ${_hq(g.auth.password)}`);
                 if (g.auth.ssh_key)  ab.push(`ssh_key  = ${_hq(g.auth.ssh_key)}`);
+                if (g.auth.ssh_key_passphrase) ab.push(`ssh_key_passphrase = ${_hq(g.auth.ssh_key_passphrase)}`);
                 gb.push('', 'auth {', ...ab.map(l => '  ' + l), '}');
             }
             wb.push('', 'git {', ...gb.map(l => '  ' + l), '}');
+        }
+        if (Array.isArray(w.mounts)) {
+            for (const m of w.mounts) {
+                if (!m?.path) continue;
+                const mb = [];
+                if (m.root) mb.push(`root = ${_hq(m.root)}`);
+                if (m.git) {
+                    const g = m.git;
+                    const gb = [`enabled = "on"`, `url     = ${_hq(g.url || '')}`, `branch  = ${_hq(g.branch || 'main')}`];
+                    if (g.mode)     gb.push(`mode     = ${_hq(g.mode)}`);
+                    if (g.id)       gb.push(`id       = ${_hq(g.id)}`);
+                    if (g.interval) gb.push(`interval = ${_hq(g.interval)}`);
+                    if (g.secret)   gb.push(`secret   = ${_hq(g.secret)}`);
+                    if (g.work_dir) gb.push(`work_dir = ${_hq(g.work_dir)}`);
+                    if (g.sub_dir)  gb.push(`sub_dir  = ${_hq(g.sub_dir)}`);
+                    if (g.auth?.type) {
+                        const ab = [`type = ${_hq(g.auth.type)}`];
+                        if (g.auth.username) ab.push(`username = ${_hq(g.auth.username)}`);
+                        if (g.auth.password) ab.push(`password = ${_hq(g.auth.password)}`);
+                        if (g.auth.ssh_key)  ab.push(`ssh_key  = ${_hq(g.auth.ssh_key)}`);
+                        if (g.auth.ssh_key_passphrase) ab.push(`ssh_key_passphrase = ${_hq(g.auth.ssh_key_passphrase)}`);
+                        gb.push('', 'auth {', ...ab.map(l => '  ' + l), '}');
+                    }
+                    mb.push('', 'git {', ...gb.map(l => '  ' + l), '}');
+                }
+                wb.push('', `mount ${_hq(m.path)} {`, ...mb.map(l => '  ' + l), '}');
+            }
         }
         if (w.markdown) {
             const md = w.markdown;
@@ -973,9 +1098,39 @@ function _routeBlock(route) {
         if (hlines) inner.push('', hlines);
     }
 
+    // expose blocks (publish this route through a relay agent)
+    for (const ex of (route.exposes || [])) {
+        const eb = [`via       = ${_hq(ex.via || '')}`, `path      = ${ex.path ? 'true' : 'false'}`, `subdomain = ${ex.subdomain ? 'true' : 'false'}`];
+        if (ex.local_host) eb.push(`local_host = ${_hq(ex.local_host)}`);
+        if (ex.local_path) eb.push(`local_path = ${_hq(ex.local_path)}`);
+        inner.push('', `expose ${_hq(ex.id)} {`, ...eb.map(l => '  ' + l), '}');
+    }
+
     // Clean up leading blank lines inside the block
     const body = inner.join('\n').replace(/^\n+/, '');
     return `route ${_hq(route.path || '/')} {\n${_indent(body)}\n}`;
+}
+
+function _relayBlock(r) {
+    const p = r.policy || {};
+    const pol = [`allow_http      = ${p.allow_http ? 'true' : 'false'}`, `allow_subdomain = ${p.allow_subdomain ? 'true' : 'false'}`];
+    if (p.allow_tcp_ports?.length) pol.push(`allow_tcp_ports = ${_strList(p.allow_tcp_ports)}`);
+    if (p.allow_udp_ports?.length) pol.push(`allow_udp_ports = ${_strList(p.allow_udp_ports)}`);
+    pol.push(`max_agents      = ${p.max_agents || 100}`, `max_streams     = ${p.max_streams || 1000}`);
+    const body = [
+        'listen {', `  address  = ${_hq(r.listen?.address || '0.0.0.0')}`, `  port     = ${r.listen?.port || 8443}`, `  protocol = ${_hq(r.listen?.protocol || 'https')}`, '}',
+        '', 'auth {', `  method = ${_hq(r.auth?.method || 'enrollment')}`, `  token  = ${_hq(r.auth?.token || '')}`, '}',
+        '', 'policy {', ...pol.map(l => '  ' + l), '}',
+    ].join('\n');
+    return `relay ${_hq(r.name || 'agents')} {\n${_indent(body)}\n}`;
+}
+
+function _agentBlock(a) {
+    const lines = [`relay  = ${_hq(a.relay || '')}`];
+    if (a.enroll) lines.push(`enroll = ${_hq(a.enroll)}`);
+    if (a.local)  lines.push(`local  = ${_hq(a.local)}`);
+    if (a.local_insecure) lines.push('local_insecure = true');
+    return `agent ${_hq(a.name || '')} {\n${_indent(lines.join('\n'))}\n}`;
 }
 
 function _headersBlock(h) {

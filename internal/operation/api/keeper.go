@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -106,6 +107,10 @@ func NewKeeper(cfg *Shared) *Keeper {
 }
 
 func (k *Keeper) unlock(w http.ResponseWriter, r *http.Request) {
+	if !loopbackRequest(r) || r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" {
+		k.errorResponse(w, http.StatusForbidden, "keeper unlock is direct-loopback-only; use `agbero keeper unlock`")
+		return
+	}
 	if k.store == nil {
 		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
 		return
@@ -415,4 +420,13 @@ func decodeB64Loose(s string) ([]byte, error) {
 		data, err = base64.URLEncoding.DecodeString(s)
 	}
 	return data, err
+}
+
+func loopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

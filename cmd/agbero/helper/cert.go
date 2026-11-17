@@ -36,7 +36,7 @@ func (c *Cert) newStore(configPath string) (tlsstore.Store, expect.Folder) {
 		if err == nil {
 			return store, certsDir
 		}
-		c.p.Logger.Warnf("failed to create keeper TLS store, falling back to disk: %v", err)
+		c.p.UI().Warnf("failed to create keeper TLS store, falling back to disk: %v", err)
 	}
 
 	store, err := tlsstore.NewDisk(tlsstore.DiskConfig{
@@ -61,15 +61,15 @@ func (c *Cert) Install(configPath string, force bool) {
 	loc := c.newLocal(configPath)
 
 	if force {
-		c.p.Logger.Info("force flag: removing existing CA before reinstall")
+		c.p.UI().Info("force flag: removing existing CA before reinstall")
 		_ = loc.UninstallCARoot()
 		loc.RemoveCA()
 	}
 
 	if err := loc.InstallCARootIfNeeded(); err != nil {
-		c.p.Logger.Fatal("failed to install CA: ", err)
+		c.p.UI().Abort("failed to install CA: ", err)
 	}
-	c.p.Logger.Info("CA root installed successfully")
+	c.p.UI().Info("CA root installed successfully")
 	c.printNSSHint(loc)
 }
 
@@ -79,11 +79,11 @@ func (c *Cert) printNSSHint(loc *tlss.Local) {
 	}
 	switch runtime.GOOS {
 	case def.Darwin:
-		c.p.Logger.Warn(def.NSSInstallHintDarwin)
+		c.p.UI().Warn(def.NSSInstallHintDarwin)
 	case def.Linux:
-		c.p.Logger.Warn(def.NSSInstallHintLinux)
+		c.p.UI().Warn(def.NSSInstallHintLinux)
 	default:
-		c.p.Logger.Warn(def.NSSInstallHintOther)
+		c.p.UI().Warn(def.NSSInstallHintOther)
 	}
 }
 
@@ -92,25 +92,25 @@ func (c *Cert) printNSSHint(loc *tlss.Local) {
 func (c *Cert) Uninstall(configPath string) {
 	loc := c.newLocal(configPath)
 
-	c.p.Logger.Info("removing CA from system trust store")
+	c.p.UI().Info("removing CA from system trust store")
 	if err := loc.UninstallCARoot(); err != nil {
-		c.p.Logger.Warnf("system trust store cleanup: %v (may already be removed)", err)
+		c.p.UI().Warnf("system trust store cleanup: %v (may already be removed)", err)
 	} else {
-		c.p.Logger.Info("CA removed from system trust store")
+		c.p.UI().Info("CA removed from system trust store")
 	}
 
 	loc.RemoveCA()
-	c.p.Logger.Info("CA certificate removed from store")
+	c.p.UI().Info("CA certificate removed from store")
 }
 
 // Delete removes a single domain's certificate from the active store.
 func (c *Cert) Delete(configPath, domain string) {
 	if domain == "" {
-		c.p.Logger.Fatal("domain is required")
+		c.p.UI().Abort("domain is required")
 	}
 	store, _ := c.newStore(configPath)
 	if err := store.Delete(domain); err != nil {
-		c.p.Logger.Fatal("failed to delete certificate for ", domain, ": ", err)
+		c.p.UI().Abort("failed to delete certificate for ", domain, ": ", err)
 	}
 	u := ui.New()
 	u.Render(func() {
@@ -123,7 +123,7 @@ func (c *Cert) List(configPath string) {
 	loc := c.newLocal(configPath)
 	certs, err := loc.ListCertificates()
 	if err != nil {
-		c.p.Logger.Fatal("failed to list certificates: ", err)
+		c.p.UI().Abort("failed to list certificates: ", err)
 	}
 
 	u := ui.New()

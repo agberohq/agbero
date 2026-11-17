@@ -62,9 +62,13 @@ type SystemSnapshot struct {
 }
 
 type HostSnapshot struct {
-	Routes    []*RouteSnapshot `json:"routes"`
-	Proxies   []*ProxySnapshot `json:"proxies"`
-	TotalReqs uint64           `json:"total_reqs"`
+	Routes     []*RouteSnapshot `json:"routes"`
+	Proxies    []*ProxySnapshot `json:"proxies"`
+	TotalReqs  uint64           `json:"total_reqs"`
+	BytesIn    uint64           `json:"bytes_in,omitempty"`
+	BytesOut   uint64           `json:"bytes_out,omitempty"`
+	Datagrams  uint64           `json:"datagrams,omitempty"`
+	WebSockets int64            `json:"websockets,omitempty"`
 }
 
 type RouteSnapshot struct {
@@ -73,6 +77,8 @@ type RouteSnapshot struct {
 	Strategy   string                `json:"strategy"`
 	Backends   []*BackendSnapshot    `json:"backends"`
 	Serverless []*ServerlessSnapshot `json:"serverless,omitempty"`
+	TotalReqs  uint64                `json:"total_reqs"`
+	Failures   uint64                `json:"failures"`
 }
 
 type ServerlessSnapshot struct {
@@ -90,6 +96,11 @@ type ProxySnapshot struct {
 	Strategy       string             `json:"strategy"`
 	Backends       []*BackendSnapshot `json:"backends"`
 	ActiveSessions int64              `json:"active_sessions,omitempty"`
+	TotalReqs      uint64             `json:"total_reqs"`
+	Failures       uint64             `json:"failures"`
+	BytesIn        uint64             `json:"bytes_in,omitempty"`
+	BytesOut       uint64             `json:"bytes_out,omitempty"`
+	Datagrams      uint64             `json:"datagrams,omitempty"`
 }
 
 type HealthSnapshot struct {
@@ -104,13 +115,17 @@ type HealthSnapshot struct {
 }
 
 type BackendSnapshot struct {
-	URL       string                  `json:"url"`
-	Alive     bool                    `json:"alive"`
-	InFlight  int64                   `json:"in_flight"`
-	Failures  int64                   `json:"failures"`
-	TotalReqs uint64                  `json:"total_reqs"`
-	Latency   metrics.LatencySnapshot `json:"latency_us"`
-	Health    HealthSnapshot          `json:"health"`
+	URL        string                  `json:"url"`
+	Alive      bool                    `json:"alive"`
+	InFlight   int64                   `json:"in_flight"`
+	Failures   int64                   `json:"failures"`
+	TotalReqs  uint64                  `json:"total_reqs"`
+	BytesIn    uint64                  `json:"bytes_in,omitempty"`
+	BytesOut   uint64                  `json:"bytes_out,omitempty"`
+	Datagrams  uint64                  `json:"datagrams,omitempty"`
+	WebSockets int64                   `json:"websockets,omitempty"`
+	Latency    metrics.LatencySnapshot `json:"latency_us"`
+	Health     HealthSnapshot          `json:"health"`
 }
 
 var (
@@ -198,22 +213,42 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 		countAll, countHttp, countTcp, countUdp, countWorker int
 	)
 
-	hosts, _ := hm.LoadAll()
-	for domain, hcfg := range hosts {
+	hosts, _ := hm.LoadCanonical()
+	// LoadCanonical is keyed by host ID, so a multi-domain host is reported once
+	// instead of once per alias.
+	for _, hcfg := range hosts {
+		if hcfg == nil {
+			continue
+		}
+
+		domain := ""
+		if len(hcfg.Domains) > 0 {
+			domain = strings.ToLower(strings.TrimSpace(hcfg.Domains[0]))
+		}
+		if domain == "" {
+			continue
+		}
+
 		hSnap := &HostSnapshot{
 			Routes:  make([]*RouteSnapshot, 0),
 			Proxies: make([]*ProxySnapshot, 0),
 		}
 
-		var totalReqs uint64
+		var totalReqs, hostBytesIn, hostBytesOut, hostDatagrams uint64
+		var hostWebSockets int64
 
 		for _, route := range hcfg.Routes {
+			protocol := strings.ToLower(strings.TrimSpace(route.Protocol))
+			if protocol == "" {
+				protocol = def.RouteProtocolHTTP
+			}
 			rSnap := &RouteSnapshot{
-				Protocol: "http",
+				Protocol: protocol,
 				Path:     route.Path,
 				Strategy: route.Backends.Strategy,
 				Backends: make([]*BackendSnapshot, 0),
 			}
+			var routeReqs, routeFailures uint64
 
 			if rSnap.Strategy == "" {
 				rSnap.Strategy = def.StrategyRoundRobin
@@ -256,12 +291,18 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					}
 				}
 
+				var bytesIn, bytesOut, datagrams uint64
+				var websockets int64
 				if stats := res.Metrics.Get(statsKey); stats != nil {
 					snap := stats.Activity.Snapshot()
 					latSnap = snap["latency"].(metrics.LatencySnapshot)
 					failures = int64(snap["failures"].(uint64))
 					reqs = int64(snap["requests"].(uint64))
 					inFlight = snap["in_flight"].(int64)
+					bytesIn = stats.Activity.BytesIn.Load()
+					bytesOut = stats.Activity.BytesOut.Load()
+					datagrams = stats.Activity.Datagrams.Load()
+					websockets = stats.Activity.WebSockets.Load()
 
 					if latSnap.Count > 0 && latSnap.P99 > 0 {
 						val := float64(latSnap.P99)
@@ -281,17 +322,27 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				}
 
 				bSnap := &BackendSnapshot{
-					URL:       addressStr,
-					Alive:     alive,
-					InFlight:  inFlight,
-					Failures:  failures,
-					TotalReqs: uint64(reqs),
-					Latency:   latSnap,
-					Health:    hSnapStruct,
+					URL:        addressStr,
+					Alive:      alive,
+					InFlight:   inFlight,
+					Failures:   failures,
+					TotalReqs:  uint64(reqs),
+					BytesIn:    bytesIn,
+					BytesOut:   bytesOut,
+					Datagrams:  datagrams,
+					WebSockets: websockets,
+					Latency:    latSnap,
+					Health:     hSnapStruct,
 				}
 
 				rSnap.Backends = append(rSnap.Backends, bSnap)
 				totalReqs += uint64(reqs)
+				hostBytesIn += bytesIn
+				hostBytesOut += bytesOut
+				hostDatagrams += datagrams
+				hostWebSockets += websockets
+				routeReqs += uint64(reqs)
+				routeFailures += uint64(failures)
 			}
 
 			for _, rp := range route.Serverless.Replay {
@@ -307,6 +358,8 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					slSnap.Failures = snap["failures"].(uint64)
 					slSnap.Latency = snap["latency"].(metrics.LatencySnapshot)
 					totalReqs += slSnap.TotalReqs
+					routeReqs += slSnap.TotalReqs
+					routeFailures += slSnap.Failures
 					if slSnap.Latency.Count > 0 && slSnap.Latency.P99 > 0 {
 						val := float64(slSnap.Latency.P99)
 						sumAll += val
@@ -327,6 +380,8 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					slSnap.Failures = snap["failures"].(uint64)
 					slSnap.Latency = snap["latency"].(metrics.LatencySnapshot)
 					totalReqs += slSnap.TotalReqs
+					routeReqs += slSnap.TotalReqs
+					routeFailures += slSnap.Failures
 
 					if slSnap.Latency.Count > 0 && slSnap.Latency.P99 > 0 {
 						val := float64(slSnap.Latency.P99)
@@ -339,6 +394,8 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				rSnap.Serverless = append(rSnap.Serverless, slSnap)
 			}
 
+			rSnap.TotalReqs = routeReqs
+			rSnap.Failures = routeFailures
 			hSnap.Routes = append(hSnap.Routes, rSnap)
 		}
 
@@ -367,6 +424,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			if pSnap.Strategy == "" {
 				pSnap.Strategy = def.StrategyRoundRobin
 			}
+			var proxyReqs, proxyFailures, proxyBytesIn, proxyBytesOut, proxyDatagrams uint64
 
 			for _, srv := range proxy.Backends {
 				addressStr := srv.Address.String()
@@ -405,12 +463,18 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					}
 				}
 
+				var bytesIn, bytesOut, datagrams uint64
+				var websockets int64
 				if stats := res.Metrics.Get(statsKey); stats != nil {
 					snap := stats.Activity.Snapshot()
 					latSnap = snap["latency"].(metrics.LatencySnapshot)
 					failures = int64(snap["failures"].(uint64))
 					reqs = int64(snap["requests"].(uint64))
 					inFlight = snap["in_flight"].(int64)
+					bytesIn = stats.Activity.BytesIn.Load()
+					bytesOut = stats.Activity.BytesOut.Load()
+					datagrams = stats.Activity.Datagrams.Load()
+					websockets = stats.Activity.WebSockets.Load()
 
 					if latSnap.Count > 0 && latSnap.P99 > 0 {
 						val := float64(latSnap.P99)
@@ -443,22 +507,43 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				}
 
 				bSnap := &BackendSnapshot{
-					URL:       addressStr,
-					Alive:     alive,
-					InFlight:  inFlight,
-					Failures:  failures,
-					TotalReqs: uint64(reqs),
-					Latency:   latSnap,
-					Health:    hSnapStruct,
+					URL:        addressStr,
+					Alive:      alive,
+					InFlight:   inFlight,
+					Failures:   failures,
+					TotalReqs:  uint64(reqs),
+					BytesIn:    bytesIn,
+					BytesOut:   bytesOut,
+					Datagrams:  datagrams,
+					WebSockets: websockets,
+					Latency:    latSnap,
+					Health:     hSnapStruct,
 				}
 
 				pSnap.Backends = append(pSnap.Backends, bSnap)
 				totalReqs += uint64(reqs)
+				proxyReqs += uint64(reqs)
+				proxyFailures += uint64(failures)
+				proxyBytesIn += bytesIn
+				proxyBytesOut += bytesOut
+				proxyDatagrams += datagrams
 			}
+			pSnap.TotalReqs = proxyReqs
+			pSnap.Failures = proxyFailures
+			pSnap.BytesIn = proxyBytesIn
+			pSnap.BytesOut = proxyBytesOut
+			pSnap.Datagrams = proxyDatagrams
 			hSnap.Proxies = append(hSnap.Proxies, pSnap)
+			hostBytesIn += proxyBytesIn
+			hostBytesOut += proxyBytesOut
+			hostDatagrams += proxyDatagrams
 		}
 
 		hSnap.TotalReqs = totalReqs
+		hSnap.BytesIn = hostBytesIn
+		hSnap.BytesOut = hostBytesOut
+		hSnap.Datagrams = hostDatagrams
+		hSnap.WebSockets = hostWebSockets
 		sysSnap.Hosts[domain] = hSnap
 	}
 

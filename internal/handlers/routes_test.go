@@ -1850,3 +1850,28 @@ func TestRouteHandler_Serverless_NotFound(t *testing.T) {
 		t.Errorf("Expected status 404, got %d", rr.Code)
 	}
 }
+
+func TestNewRoute_ProtectWired(t *testing.T) {
+	cfg := NewTestConfig(t)
+	route := &alaye.Route{
+		Enabled: expect.Active,
+		Path:    "/admin",
+		Backends: alaye.Backend{
+			Enabled: expect.Active,
+			Servers: []alaye.Server{{Address: "http://127.0.0.1:1"}},
+		},
+		Protect: alaye.Protect{
+			Enabled: expect.Active,
+			Users:   []string{"alice:$2y$10$abcdefghijklmnopqrstuv"},
+		},
+	}
+	h := NewRoute(cfg, route)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want auth redirect", rec.Code)
+	}
+	if !strings.Contains(rec.Header().Get("Location"), "/admin/_agbero/login") {
+		t.Fatalf("location = %q", rec.Header().Get("Location"))
+	}
+}

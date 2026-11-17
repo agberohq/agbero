@@ -152,8 +152,9 @@ func (m *Manager) maintenanceLoop() {
 	}
 }
 
-// BroadcastReliable sends a payload to all cluster members over TCP.
-// It guarantees delivery for critical data like configurations and certificates.
+// BroadcastReliable sends a payload to currently connected peers over TCP.
+// Delivery is best-effort: an offline peer receives the state from a join
+// snapshot when it returns. This is not durable delivery or a consensus log.
 func (m *Manager) BroadcastReliable(op OpType, key string, value []byte) error {
 	env := Envelope{
 		Op:        op,
@@ -211,8 +212,9 @@ func (m *Manager) BroadcastGossip(op OpType, key string, value []byte) {
 	m.delegate.apply(env, true)
 }
 
-// TryAcquireLock attempts to grab a distributed lock over the gossip layer.
-// Useful for ensuring single-node operations (like ACME issuance) in a cluster.
+// TryAcquireLock attempts a best-effort lock over gossip. It is useful for
+// reducing duplicate work (such as ACME issuance), but it is not a consensus
+// lock and does not provide mutual exclusion during a network partition.
 func (m *Manager) TryAcquireLock(key string) bool {
 	lockKey := "lock:" + key
 	myID := m.nodeName

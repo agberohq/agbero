@@ -6,6 +6,7 @@ type Config struct {
 	ConfigPath  string
 	DevMode     bool
 	Silent      bool
+	ServiceMode bool
 	InstallHere bool
 
 	// UninstallForce: skip confirmation prompt AND remove the binary.
@@ -46,13 +47,28 @@ type Config struct {
 	SystemForce bool
 	SystemYes   bool
 
-	KeeperKey     string
-	KeeperValue   string
-	KeeperB64     bool
-	KeeperFile    string
-	KeeperForce   bool
-	KeeperUser    string
-	KeeperOutFile string
+	RelayTarget        string
+	RelayCheckServer   bool
+	RelayCheckClient   bool
+	RelayCheckAttempts int
+	RelayCheckWait     time.Duration
+	RelayCheckTimeout  time.Duration
+	RelayAgent         string
+	RelayAdminToken    string
+
+	KeeperKey        string
+	KeeperMakeLength int
+	KeeperValue      string
+	KeeperB64        bool
+	KeeperFile       string
+	KeeperForce      bool
+	KeeperUser       string
+	KeeperOutFile    string
 
 	AdminPassword string
+
+	MCPUser  string
+	MCPScope string
+	MCPTTL   time.Duration
+	MCPJTI   string
 }

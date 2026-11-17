@@ -65,6 +65,18 @@ internal/handlers/xtcp/          ← TCP proxy (L4)
 Backend / filesystem / subprocess
 ```
 
+**Shutdown/reload flow:**
+```
+jack shutdown wave
+  → server.shutdownImpl
+  → listener.Stop(ctx)
+  → xtcp/xudp lifecycle.Controller.Wait(ctx)
+  → bounded drain or ErrDrainTimeout
+```
+
+The listener wave is joined before jack starts the traffic-manager wave. The
+process has a final watchdog so a non-cooperative handler cannot prevent exit.
+
 **Hot reload flow:**
 ```
 file change in hosts.d/ → internal/handlers/routes.go (fsnotify watcher)
@@ -88,6 +100,7 @@ file change in hosts.d/ → internal/handlers/routes.go (fsnotify watcher)
 | `internal/hub/cluster/` | Gossip/TCP cluster engine based on HashiCorp `memberlist`, secret sync |
 | `internal/hub/cook/` | GitOps deployment engine — atomic symlink swapping for static sites |
 | `internal/hub/secrets/` | Keeper resolution and wiring — connects `ss://` references to the keeper store |
+| `internal/hub/lifecycle/` | Admission gate and bounded drain used by TCP/UDP listeners |
 | `internal/hub/tlss/` | Certificate management, Local CA generation, Let's Encrypt ACME integration |
 | `internal/hub/orchestrator/` | Worker process management — background daemons, cron, on-demand processes |
 | `internal/hub/resource/` | HTTP transport pool and upstream connection management |

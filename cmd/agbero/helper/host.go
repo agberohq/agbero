@@ -185,7 +185,7 @@ func (h *Host) Add(configPath string) {
 
 	t, err := template.New("route").Parse(tplString)
 	if err != nil {
-		h.p.Logger.Fatal("template error: ", err)
+		h.p.UI().Abort("template error: ", err)
 	}
 
 	filename := strings.ReplaceAll(fmt.Sprintf("%s.hcl", domain), "*", "wildcard")
@@ -194,12 +194,12 @@ func (h *Host) Add(configPath string) {
 
 	f, err := os.Create(filePath)
 	if err != nil {
-		h.p.Logger.Fatal("failed to create file: ", err)
+		h.p.UI().Abort("failed to create file: ", err)
 	}
 	defer f.Close()
 
 	if err := t.Execute(f, routeData{Domain: domain, Target: target, Port: port}); err != nil {
-		h.p.Logger.Fatal("failed to write config: ", err)
+		h.p.UI().Abort("failed to write config: ", err)
 	}
 
 	u.Render(func() {
@@ -213,7 +213,7 @@ func (h *Host) Remove(configPath string) {
 
 	files, err := hostsDir.ReadFiles()
 	if err != nil {
-		h.p.Logger.Fatal("failed to read hosts dir: ", err)
+		h.p.UI().Abort("failed to read hosts dir: ", err)
 	}
 
 	var fileNames []string
@@ -248,7 +248,7 @@ func (h *Host) Remove(configPath string) {
 	}
 
 	if err := os.Remove(hostsDir.FilePath(selected)); err != nil {
-		h.p.Logger.Fatal("failed to delete file: ", err)
+		h.p.UI().Abort("failed to delete file: ", err)
 	}
 
 	u.Render(func() {
@@ -265,7 +265,7 @@ func (h *Host) resolveHostsDir(configPath string) expect.Folder {
 	hostsDir := expect.NewFolder(filepath.Dir(configPath)).Sub(def.HostDir)
 
 	if err := hostsDir.Init(expect.DirPerm); err != nil {
-		h.p.Logger.Fatal("failed to create hosts directory: ", err)
+		h.p.UI().Abort("failed to create hosts directory: ", err)
 	}
 	return hostsDir
 }

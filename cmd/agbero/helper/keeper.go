@@ -1,11 +1,20 @@
 package helper
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/secrets"
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 	keeperlib "github.com/agberohq/keeper"
 	"github.com/agberohq/keeper/x/keepcmd"
 	"github.com/olekukonko/zero"
@@ -37,24 +46,94 @@ func (k *Keeper) cmds(store *keeperlib.Keeper) *keepcmd.Commands {
 // All Keeper CLI methods call this first so the error is consistent.
 func (k *Keeper) requireStore() *keeperlib.Keeper {
 	if k.p.Store == nil {
-		k.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
+		k.p.UI().Abort("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
 	}
 	return k.p.Store
 }
 
+func (k *Keeper) Unlock(configPath string) {
+	global, err := LoadGlobal(configPath)
+	if err != nil {
+		k.p.UI().Abort("load config: ", err)
+	}
+	dataDir := global.Storage.DataDir
+	if !dataDir.IsSet() {
+		k.p.UI().Abort("storage.data_dir is not configured")
+	}
+	if _, err := secrets.ReadControlFile(dataDir); err != nil {
+		pidPath := dataDir.FilePath(def.DefaultPIDName)
+		if pid, perr := os.ReadFile(pidPath); perr == nil && strings.TrimSpace(string(pid)) != "" {
+			k.p.UI().Abortf("keeper unlock endpoint is not available (pid %s is running; it may already be unlocked or running an older binary). Restart with the current build and retry.", strings.TrimSpace(string(pid)))
+		}
+		k.p.UI().Abort("service is not running; start it with 'agbero service start' first, then retry: ", err)
+	}
+	k.p.UI().Start("Unlocking keeper")
+	u := ui.New()
+	result, err := u.PasswordRequired("Keeper passphrase")
+	if err != nil {
+		k.p.UI().Abort("read passphrase: ", err)
+	}
+	pass := result.Bytes()
+	defer result.Zero()
+	if err := secrets.UnlockControl(dataDir, pass); err != nil {
+		zero.Bytes(pass)
+		k.p.UI().Abort("unlock failed: ", err)
+	}
+	zero.Bytes(pass)
+	k.p.UI().Done("Keeper unlocked")
+}
+
 func (k *Keeper) List(_ string) {
 	store := k.requireStore()
+	k.p.UI().Start("Reading keeper index")
 	if err := k.cmds(store).List(); err != nil {
-		k.p.Logger.Fatal(err)
+		k.p.UI().Abort(err)
 	}
+	k.p.UI().Done("Keeper index loaded")
 }
 
 func (k *Keeper) Get(_ string, key string) {
 	store := k.requireStore()
 	key = normaliseKey(key)
+	k.p.UI().Start("Reading %s", key)
 	if err := k.cmds(store).Get(key); err != nil {
-		k.p.Logger.Fatal(err)
+		k.p.UI().Abort(err)
 	}
+	k.p.UI().Done("Secret retrieved")
+}
+
+// Make generates a random secret, stores it once, and prints it so the same
+// value can be copied to another node's keeper.
+func (k *Keeper) Make(_ string, key string, length int) {
+	store := k.requireStore()
+	if strings.TrimSpace(key) == "" {
+		k.p.UI().Abort("key is required")
+	}
+	key = normaliseKey(key)
+	if length <= 0 {
+		length = 32
+	}
+	k.p.UI().Start("Generating secret for %s", key)
+	if _, err := store.Get(key); err == nil {
+		k.p.UI().Abortf("keeper key %q already exists; use 'keeper set' or 'keeper delete' first", key)
+	}
+	secret, err := security.NewPassword().Generate(length)
+	if err != nil {
+		k.p.UI().Abort("generate secret: ", err)
+	}
+	if err := store.EnsureBucket(key); err != nil {
+		k.p.UI().Abort("failed to prepare bucket: ", err)
+	}
+	if err := store.Set(key, []byte(secret)); err != nil {
+		k.p.UI().Abort("store secret: ", err)
+	}
+	k.p.UI().Done("Secret stored in keeper")
+	u := ui.New()
+	u.Render(func() {
+		u.SecretBox("Generated secret — "+key, secret)
+		u.InfoLine("reference in agbero.hcl as:  ss://" + key)
+		u.InfoLine("stored in keeper; copy this value to the other node with 'keeper set " + key + " <value>'")
+	})
 }
 
 func (k *Keeper) Set(_ string, key, value string, asB64 bool, fromFile string) {
@@ -63,14 +142,16 @@ func (k *Keeper) Set(_ string, key, value string, asB64 bool, fromFile string) {
 	u := ui.New()
 	rawKey := key
 	key = normaliseKey(key)
+	k.p.UI().Start("Storing %s", key)
 
 	if err := store.EnsureBucket(key); err != nil {
-		k.p.Logger.Fatal("failed to prepare bucket: ", err)
+		k.p.UI().Abort("failed to prepare bucket: ", err)
 	}
 
 	if err := k.cmds(store).Set(key, value, keepcmd.SetOptions{Base64: asB64, FromFile: fromFile}); err != nil {
-		k.p.Logger.Fatal(err)
+		k.p.UI().Abort(err)
 	}
+	k.p.UI().Done("Secret stored in keeper")
 
 	ref := rawKey
 	if !strings.Contains(rawKey, "://") {
@@ -83,7 +164,7 @@ func (k *Keeper) Set(_ string, key, value string, asB64 bool, fromFile string) {
 
 func (k *Keeper) Delete(_ string, key string, force bool) {
 	if key == "" {
-		k.p.Logger.Fatal("key is required")
+		k.p.UI().Abort("key is required")
 	}
 	if !force {
 		u := ui.New()
@@ -95,22 +176,109 @@ func (k *Keeper) Delete(_ string, key string, force bool) {
 	}
 	store := k.requireStore()
 	key = normaliseKey(key)
+	k.p.UI().Start("Deleting %s", key)
 	if err := k.cmds(store).Delete(key); err != nil {
-		k.p.Logger.Fatal(err)
+		k.p.UI().Abort(err)
 	}
+	k.p.UI().Done("Secret deleted")
 }
 
 func (k *Keeper) Backup(_ string, dest string) {
 	store := k.requireStore()
 	if err := k.cmds(store).Backup(keepcmd.BackupOptions{Dest: dest}); err != nil {
-		k.p.Logger.Fatal(err)
+		k.p.UI().Abort(err)
 	}
+}
+
+// Check reports whether the keeper is locked without prompting for a
+// passphrase or mutating the store.
+func (k *Keeper) Check(configPath string) {
+	u := ui.New()
+	global, err := LoadGlobal(configPath)
+	if err != nil {
+		k.p.UI().Abort("load config: ", err)
+	}
+	if address := strings.TrimSpace(global.Admin.Address); address != "" {
+		if locked, ok := keeperStatus(address); ok {
+			u.Render(func() {
+				if locked {
+					u.WarnLine("keeper is locked (service)")
+				} else {
+					u.SuccessLine("keeper is unlocked (service)")
+				}
+			})
+			return
+		}
+	}
+
+	dataDir := global.Storage.DataDir
+	if !dataDir.IsSet() {
+		dataDir = setup.NewContext(k.p.Logger).Paths.DataDir
+	}
+	if _, err := secrets.ReadControlFile(dataDir); err == nil {
+		u.Render(func() { u.WarnLine("keeper is locked (service waiting for unlock)") })
+		return
+	}
+
+	dbPath := filepath.Join(dataDir.Path(), def.DefaultKeeperName)
+	if _, err := os.Stat(dbPath); err != nil {
+		u.Render(func() { u.WarnLine("keeper database is not initialized") })
+		return
+	}
+	store, err := secrets.Open(secrets.Config{
+		DataDir:         dataDir,
+		Setting:         &global.Security.Keeper,
+		Logger:          k.p.Logger,
+		Interactive:     false,
+		AllowLocked:     true,
+		DisableAutoLock: true,
+	})
+	if err != nil {
+		k.p.UI().Abort("open keeper: ", err)
+	}
+	defer store.Close()
+	u.Render(func() {
+		if store.IsLocked() {
+			u.WarnLine("keeper is locked")
+		} else {
+			u.SuccessLine("keeper is unlocked")
+		}
+	})
+}
+
+func keeperStatus(address string) (bool, bool) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return false, false
+	}
+	if strings.HasPrefix(address, ":") {
+		address = "127.0.0.1" + address
+	}
+	if !strings.Contains(address, "://") {
+		address = "http://" + address
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(strings.TrimRight(address, "/") + "/status")
+	if err != nil {
+		return false, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, false
+	}
+	var st struct {
+		Locked bool `json:"locked"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return false, false
+	}
+	return st.Locked, true
 }
 
 func (k *Keeper) Status(_ string) {
 	store := k.requireStore()
 	if err := k.cmds(store).Status(); err != nil {
-		k.p.Logger.Fatal(err)
+		k.p.UI().Abort(err)
 	}
 }
 
@@ -128,17 +296,17 @@ func (k *Keeper) Rotate(_ string) {
 	u := ui.New()
 	newResult, err := u.PasswordConfirm("New passphrase")
 	if err != nil {
-		k.p.Logger.Fatal("new passphrase required: ", err)
+		k.p.UI().Abort("new passphrase required: ", err)
 	}
 	newPass := newResult.Bytes()
 	defer newResult.Zero()
 
 	if err := store.Rotate(newPass); err != nil {
-		k.p.Logger.Fatal("rotation failed: ", err)
+		k.p.UI().Abort("rotation failed: ", err)
 	}
 
 	zero.Bytes(newPass)
-	ui.New().SuccessLine("passphrase rotated — update keeper.passphrase in agbero.hcl if stored there")
+	ui.New().SuccessLine("passphrase rotated — update the systemd credential, Vault entry, or environment source")
 	ui.New().Blank()
 }
 

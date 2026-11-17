@@ -10,6 +10,7 @@ type Sample struct {
 	P99Ms       float64 `json:"p99_ms"`          // p99 latency in milliseconds
 	ErrorRate   float64 `json:"error_rate"`      // 0.0–100.0 percent
 	ActiveBE    int     `json:"active_backends"` // backends currently alive
+	InFlight    int64   `json:"in_flight,omitempty"`
 }
 
 // HostSamples is the set of samples for one host (keyed by domain).

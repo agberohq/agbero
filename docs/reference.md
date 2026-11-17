@@ -235,6 +235,7 @@ route "/api/v1" {
 | Block | Description |
 |-------|-------------|
 | `basic_auth` | HTTP Basic Authentication |
+| `protect` | Agbero-hosted login form with a signed session cookie |
 | `forward_auth` | Delegate auth to external service |
 | `jwt_auth` | JWT Bearer token validation |
 | `o_auth` | OAuth 2.0 / OIDC |
@@ -313,7 +314,8 @@ Serves static files from a local directory or Git repository.
 | `listing` | `bool` | `listing` | Enable directory listing |
 | `spa` | `bool` | `spa` | SPA mode: fall back to `index.html` for unmatched paths |
 | `php` | `PHP` | `php` block | PHP-FPM integration |
-| `git` | `Git` | `git` block | Git repository source |
+| `git` | `Git` | `git` block | Primary Git repository source |
+| `mount` | `[]WebMount` | `mount` blocks | Additional path-prefix roots or Git deployments |
 | `markdown` | `Markdown` | `markdown` block | Markdown rendering |
 
 ### `git` block
@@ -322,21 +324,67 @@ Serves static files from a local directory or Git repository.
 |-------|------|---------|-------------|
 | `enabled` | `Enabled` | `enabled` | Enable Git source |
 | `id` | `string` | `id` | **Required.** Unique identifier for this git source |
-| `url` | `string` | `url` | **Required.** Repository URL |
+| `url` | `string` | `url` | Repository URL. Required for `pull` and `both`; optional for `push` (push-only mode) |
 | `branch` | `string` | `branch` | Branch to clone (default: repo default) |
-| `secret` | `Value` | `secret` | Webhook secret for push events |
-| `interval` | `Duration` | `interval` | Polling interval for updates |
+| `mode` | `string` | `mode` | Deployment trigger: `auto` (default), `pull`, `push`, or `both`. `auto` derives the mode from `interval`/`secret` exactly as earlier versions did |
+| `secret` | `Value` | `secret` | Webhook secret. Required for `push` and `both` |
+| `interval` | `Duration` | `interval` | Polling interval. Required for `pull` and `both` |
 | `work_dir` | `string` | `work_dir` | Local directory for git checkout |
 | `sub_dir` | `string` | `sub_dir` | Subdirectory within the repo to serve |
 | `auth` | `GitAuth` | `auth` block | Repository authentication |
+
+### `web.mount` block
+
+A mount serves one path prefix from its own root or Git deployment. Mounts are
+matched longest-prefix-first; the matched prefix is stripped before the request
+is resolved against the mount root. Unmatched requests use the primary `web.root`
+or `web.git` source.
+
+```hcl
+web {
+  root = "/var/www/wo"
+
+  mount "/site1" {
+    root = "/var/www/wo/site1"
+  }
+
+  mount "/site2" {
+    git {
+      enabled  = "on"
+      mode     = "pull"
+      id       = "wo-site2"
+      url      = "https://github.com/example/site2.git"
+      interval = "5m"
+
+      auth {
+        type     = "basic"
+        username = "x-access-token"
+        password = "ss://deploy/github-site2-token"
+      }
+    }
+  }
+}
+```
+
+| Field | Type | HCL key | Description |
+|-------|------|---------|-------------|
+| `path` | `string` | *(label)* | **Required.** Path prefix, starting with `/`; `"/"` is not allowed |
+| `root` | `string` | `root` | Static directory to serve for this mount |
+| `git` | `Git` | `git` block | Git deployment to serve for this mount; overrides `root` |
+
+Either `root` or an enabled `git` block is required. Mount paths must be unique.
+Each mount has its own `git.auth` block, so a private mount can use an HTTPS
+token, an SSH deploy key, or the SSH agent independently of the other mounts.
+Directory listing, SPA, index, markdown, PHP, cache, and nonce settings are
+inherited from the parent `web` block.
 
 ### `git.auth` block
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `type` | `string` | Auth type: `basic`, `ssh-key`, `ssh-agent` |
-| `username` | `string` | Username for basic auth |
-| `password` | `Value` | Password or token |
+| `username` | `string` | Username for basic auth. For GitHub HTTPS tokens this is a placeholder such as `x-access-token`, **not** the token itself |
+| `password` | `Value` | Password or access token. Put the GitHub/GitLab token here |
 | `ssh_key` | `Value` | SSH private key (PEM format) |
 | `ssh_key_passphrase` | `Value` | Passphrase for encrypted SSH key |
 
@@ -705,8 +753,34 @@ Same as `rule` but named (via label) for reuse across routes via `use_policy`.
 | Field | Type | HCL key | Description |
 |-------|------|---------|-------------|
 | `enabled` | `Enabled` | `enabled` | Enable Basic Auth |
-| `users` | `[]string` | `users` | User list as `"username:password"` or `"username:$2a$..."` (bcrypt) |
+| `users` | `[]string` | `users` | User list as `"username:$2a$..."` (bcrypt) or `"username:ss://namespace/key"` (Keeper reference) |
 | `realm` | `string` | `realm` | Auth realm (shown in browser dialog) |
+
+---
+
+## `protect` block
+
+Route-local login form with a signed, HttpOnly session cookie. The login and
+logout endpoints are derived below the route:
+
+- `<route>/_agbero/login`
+- `<route>/_agbero/logout`
+
+`protect` is mutually exclusive with `basic_auth`, `forward_auth`,
+`jwt_auth`, and `o_auth` on the same route, and requires a concrete (non-wildcard)
+route path.
+
+| Field | Type | HCL key | Description |
+|-------|------|---------|-------------|
+| `enabled` | `Enabled` | `enabled` | Enable the Agbero login form |
+| `title` | `string` | `title` | Display title on the login page (HTML-escaped) |
+| `users` | `[]string` | `users` | User list as `"username:$2a$..."` (bcrypt) or `"username:ss://namespace/key"` (Keeper reference) |
+| `session_ttl` | `Duration` | `session_ttl` | Session lifetime (default `8h`) |
+| `cookie_name` | `string` | `cookie_name` | Optional cookie name; Agbero derives a route-scoped name when empty |
+
+The Admin UI's **Intercept** page manages both auth blocks, generates
+bcrypt hashes server-side, stores them in Keeper, and rewrites only the targeted
+route block with `hclwrite` so comments and unrelated settings are preserved.
 
 ---
 
@@ -907,8 +981,8 @@ Setup with `agbero admin totp setup --user <username>`. See [Security Guide](./s
 | Field | Type | Description |
 |-------|------|-------------|
 | `enabled` | `Enabled` | Enable the keeper. Agbero will not start without a usable keeper. |
-| `passphrase` | `Value` | Master passphrase to unlock the keeper. Prefer `"env.AGBERO_KEEPER_PASSPHRASE"` or a `passphrase_file` over plaintext. |
-| `passphrase_file` | `string` | Path to a `0600` (or `0640 root:agbero`) file containing the master passphrase. Recommended for system services. Resolution order: `passphrase`, `passphrase_file`, `AGBERO_KEEPER_PASSPHRASE`, `AGBERO_PASSPHRASE`, interactive prompt. |
+| `passphrase` | `Value` | Master passphrase to unlock the keeper. Prefer `"env.AGBERO_KEEPER_PASSPHRASE"` or a systemd credential over plaintext. |
+| `passphrase_file` | `string` | Legacy/existing path to a passphrase file. New installs do not create one. Resolution order: systemd credential, `passphrase`, `passphrase_file`, `AGBERO_KEEPER_PASSPHRASE`, `AGBERO_PASSPHRASE`, interactive prompt, locked service/manual unlock. |
 | `auto_lock` | `Duration` | Automatically lock the keeper after this period of inactivity. When locked, all `ss://` references return their literal string until unlocked via `POST /api/v1/keeper/unlock`. |
 | `logging` | `Enabled` | Log every keeper open, read, write, and delete at INFO level. |
 | `audit` | `Enabled` | Detailed audit trail: logs the key name on every secret read and write. Higher log volume but useful for compliance. |

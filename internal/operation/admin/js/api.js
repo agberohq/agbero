@@ -147,6 +147,10 @@ export async function refreshToken() {
 
 export async function fetchUptime()      { return _safe(() => getApi().get('/uptime')); }
 export async function fetchConfig()      { return _safe(() => getApi().get('/config')); }
+// Build/runtime metadata, not the HCL schema version.
+export async function fetchRelay()       { return _safe(() => getApi().get('/api/v1/relay')); }
+
+export async function fetchSystem()      { return _safe(() => getApi().get('/api/v1/system')); }
 export async function fetchLogs(lines)   { return _safe(() => getApi().get(`/logs?limit=${lines}`)); }
 
 // Host management  /api/v1/discovery
@@ -248,8 +252,41 @@ export async function deleteHost(domain, otpCode = '') {
     ));
 }
 
-// Certificate management  /api/v1/certs
+// Route auth admin  /api/v1/auth
+//
+// The server owns bcrypt generation and writes hashes to Keeper. These calls
+// never send a hash to the browser and never receive one from it.
 
+export async function fetchRouteAuth(domain) {
+    return _safe(() => getApi().get(`/api/v1/auth/${encodeURIComponent(domain)}`));
+}
+
+export async function updateRouteAuthConfig(domain, payload) {
+    return _safe(() => getApi().put(
+        `/api/v1/auth/${encodeURIComponent(domain)}/config`, payload
+    ));
+}
+
+export async function addRouteAuthUser(domain, payload) {
+    return _safe(() => getApi().post(
+        `/api/v1/auth/${encodeURIComponent(domain)}/users`, payload
+    ));
+}
+
+export async function resetRouteAuthUser(domain, payload) {
+    return _safe(() => getApi().put(
+        `/api/v1/auth/${encodeURIComponent(domain)}/users`, payload
+    ));
+}
+
+export async function deleteRouteAuthUser(domain, route, mode, username) {
+    const qs = new URLSearchParams({ route, mode, username });
+    return _safe(() => getApi().delete(
+        `/api/v1/auth/${encodeURIComponent(domain)}/users?${qs.toString()}`
+    ));
+}
+
+// Certificate management  /api/v1/certs
 export async function fetchCerts()                { return _safe(() => getApi().get('/api/v1/certs')); }
 export async function uploadCert(domain, cert, key) {
     return _safe(() => getApi().post('/api/v1/certs', { domain, cert, key }));
@@ -285,6 +322,15 @@ export async function fetchTelemetry(host, range) {
         `/api/v1/telemetry/history?host=${encodeURIComponent(host)}&range=${range}`
     ));
 }
+export async function fetchBackendTelemetry(host, route, backend, range) {
+    const qs = new URLSearchParams({ host, route, backend, range });
+    return _safe(() => getApi().get(`/api/v1/telemetry/backend?${qs.toString()}`));
+}
+// Cache  /api/v1/cache
+export async function fetchCacheStats()   { return _safe(() => getApi().get('/api/v1/cache/stats')); }
+export async function purgeCacheTag(tag)  { return _safe(() => getApi().delete('/api/v1/cache/purge?tag=' + encodeURIComponent(tag))); }
+export async function clearCache()        { return _safe(() => getApi().delete('/api/v1/cache')); }
+
 export async function fetchTelemetryHosts() {
     return _safe(() => getApi().get('/api/v1/telemetry/hosts'));
 }
@@ -342,6 +388,15 @@ export function getTOTPQRUrl(username) {
 export async function generateSecret(action, opts = {}) {
     return _safe(() => getApi().post('/api/v1/secrets', { action, ...opts }));
 }
+
+// MCP admin (admin JWT, served by the daemon)
+
+export async function fetchMCPStatus()        { return _safe(() => getApi().get('/api/mcp/admin/status')); }
+export async function createMCPToken(payload) { return _safe(() => getApi().post('/api/mcp/admin/token', payload)); }
+export async function revokeMCPToken(jti)     { return _safe(() => getApi().delete(`/api/mcp/admin/token/${encodeURIComponent(jti)}`)); }
+export async function fetchMCPAudit(lines = 200) { return _safe(() => getApi().get(`/api/mcp/admin/audit?lines=${lines}`)); }
+export async function createMCPHost()         { return _safe(() => getApi().post('/api/mcp/admin/host', {})); }
+export async function deleteMCPHost()         { return _safe(() => getApi().delete('/api/mcp/admin/host')); }
 
 // KV  /api/v1/kv/:key
 

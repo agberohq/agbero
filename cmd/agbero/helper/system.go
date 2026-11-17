@@ -16,7 +16,7 @@ type System struct {
 func (s *System) Backup(configPath, outPath, password string) {
 	sys := setup.NewSystem(setup.SystemConfig{Logger: s.p.Logger})
 	if err := sys.Backup(configPath, outPath, password); err != nil {
-		s.p.Logger.Fatal("backup: ", err)
+		s.p.UI().Abort("backup: ", err)
 	}
 }
 
@@ -24,7 +24,7 @@ func (s *System) Backup(configPath, outPath, password string) {
 func (s *System) Restore(inPath, configPath, password string, force, autoYes bool) {
 	sys := setup.NewSystem(setup.SystemConfig{Logger: s.p.Logger})
 	if err := sys.Restore(inPath, configPath, password, force, autoYes); err != nil {
-		s.p.Logger.Fatal("restore: ", err)
+		s.p.UI().Abort("restore: ", err)
 	}
 }
 
@@ -32,6 +32,6 @@ func (s *System) Restore(inPath, configPath, password string, force, autoYes boo
 func (s *System) Update(force, autoYes bool) {
 	sys := setup.NewSystem(setup.SystemConfig{Logger: s.p.Logger})
 	if err := sys.Update(force, autoYes); err != nil {
-		s.p.Logger.Fatal("update: ", err)
+		s.p.UI().Abort("update: ", err)
 	}
 }

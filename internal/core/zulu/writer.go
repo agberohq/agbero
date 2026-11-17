@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync/atomic"
 )
 
 // ResponseWriter wraps http.ResponseWriter to track status code and bytes written,
@@ -14,6 +15,32 @@ type ResponseWriter struct {
 	StatusCode   int
 	BytesWritten int64
 	WroteHeader  bool
+
+	// HijackedBytesIn/Out count traffic after a protocol upgrade. Those bytes
+	// bypass ResponseWriter.Write, so they need their own counters.
+	HijackedBytesIn  atomic.Int64
+	HijackedBytesOut atomic.Int64
+}
+
+type hijackCountingConn struct {
+	net.Conn
+	rw *ResponseWriter
+}
+
+func (c *hijackCountingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.rw.HijackedBytesIn.Add(int64(n))
+	}
+	return n, err
+}
+
+func (c *hijackCountingConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.rw.HijackedBytesOut.Add(int64(n))
+	}
+	return n, err
 }
 
 // writerOnly hides the ReadFrom method from io.Copy to prevent infinite recursion
@@ -53,7 +80,11 @@ func (rw *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, http.ErrNotSupported
 	}
-	return h.Hijack()
+	conn, brw, err := h.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	return &hijackCountingConn{Conn: conn, rw: rw}, brw, nil
 }
 
 func (rw *ResponseWriter) ReadFrom(r io.Reader) (n int64, err error) {

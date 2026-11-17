@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111315;color:#e7e9ee;font:15px/1.45 system-ui,sans-serif}
+main{width:min(92vw,380px);padding:28px;border:1px solid #2b3037;border-radius:12px;background:#181b1f;box-shadow:0 20px 60px #0008}
+h1{font-size:20px;margin:0 0 6px}p.sub{margin:0 0 20px;color:#969da8;font-size:13px}
+label{display:block;margin:14px 0 6px;font-size:12px;color:#b6bcc6}
+input{width:100%;padding:11px 12px;border:1px solid #343b45;border-radius:8px;background:#0f1114;color:#fff;font:inherit}
+button{width:100%;margin-top:18px;padding:11px;border:0;border-radius:8px;background:#2f7cf6;color:#fff;font:600 14px inherit;cursor:pointer}
+.err{padding:9px 11px;margin:0 0 8px;border:1px solid #6b2b2b;border-radius:8px;background:#2a1717;color:#ffb4b4;font-size:13px}
+</style></head><body><main>
+<h1>{{.Title}}</h1><p class="sub">Sign in to continue.</p>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="{{.Action}}">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="next" value="{{.Next}}">
+<label for="u">Username</label><input id="u" name="username" autocomplete="username" required autofocus>
+<label for="p">Password</label><input id="p" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Sign in</button>
+</form></main></body></html>

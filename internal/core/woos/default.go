@@ -26,7 +26,7 @@ func (Defaults) Host(h *alaye.Host) {
 		h.Protected = expect.Inactive
 	}
 
-	if len(h.Routes) > 0 {
+	if len(h.Routes) > 0 || len(h.Relays) > 0 {
 		defaultTLS(&h.TLS, h.Domains)
 	}
 	defaultLimits(&h.Limits)
@@ -41,10 +41,20 @@ func (Defaults) Host(h *alaye.Host) {
 			defaultTCPRoute(&h.Proxies[i])
 		}
 	}
+	for i := range h.Relays {
+		defaultRelay(&h.Relays[i])
+	}
+	for i := range h.Agents {
+		defaultAgent(&h.Agents[i])
+	}
 }
 
 func (Defaults) Route(r *alaye.Route) {
 	defaultRouteAll(r)
+}
+
+func (Defaults) MCP(m *alaye.MCP) {
+	defaultMCP(m)
 }
 
 func (Defaults) Firewall(f *alaye.Firewall) {
@@ -108,8 +118,10 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 	defaultTimeout(&g.Timeouts)
 	defaultStorage(&g.Storage, configPath)
 	defaultAdmin(&g.Admin)
+	defaultMCP(&g.MCP)
 	defaultLogging(&g.Logging)
 	defaultSecurity(&g.Security)
+	resolveWAFRulesDir(g, configPath)
 	defaultRateLimits(&g.RateLimits)
 	defaultGossip(&g.Gossip)
 	defaultLetsEncrypt(&g.LetsEncrypt)
@@ -121,7 +133,7 @@ func defaultRouteAll(r *alaye.Route) {
 	if r.Enabled == expect.Unknown {
 		r.Enabled = expect.Active
 	}
-	hasWeb := r.Web.Root.IsSet() || r.Web.Git.Enabled.Active()
+	hasWeb := r.Web.Root.IsSet() || r.Web.Git.Enabled.Active() || len(r.Web.Mounts) > 0
 	hasBackends := len(r.Backends.Servers) > 0
 	hasServerless := r.Serverless.Enabled.Active()
 	if hasWeb {
@@ -135,6 +147,35 @@ func defaultRouteAll(r *alaye.Route) {
 	defaultCORS(&r.CORS)
 	defaultCache(&r.Cache)
 	defaultFallback(&r.Fallback)
+	r.Protocol = strings.ToLower(strings.TrimSpace(r.Protocol))
+	if r.Protocol == "" {
+		r.Protocol = def.RouteProtocolHTTP
+	}
+	if r.Protocol == def.RouteProtocolMCP {
+		defaultMCPRoute(r)
+	}
+}
+
+// defaultMCPRoute makes an MCP route streaming- and session-safe:
+//   - session affinity on Mcp-Session-Id (2025-11-25 and earlier),
+//   - no compression (SSE/event streams must not be buffered/transformed),
+//   - no response cache.
+func defaultMCPRoute(r *alaye.Route) {
+	if r.Backends.Strategy == "" {
+		r.Backends.Strategy = def.StrategySticky
+	}
+	hasSessionKey := false
+	for _, k := range r.Backends.Keys {
+		if strings.EqualFold(strings.TrimSpace(k), def.MCPSessionKey) {
+			hasSessionKey = true
+			break
+		}
+	}
+	if !hasSessionKey {
+		r.Backends.Keys = append(r.Backends.Keys, def.MCPSessionKey)
+	}
+	r.Compression.Enabled = expect.Inactive
+	r.Cache.Enabled = expect.Inactive
 }
 
 func defaultWebRoute(r *alaye.Route) {
@@ -142,6 +183,9 @@ func defaultWebRoute(r *alaye.Route) {
 		r.Web.Enabled = expect.Active
 	}
 	defaultGit(&r.Web.Git)
+	for i := range r.Web.Mounts {
+		defaultGit(&r.Web.Mounts[i].Git)
+	}
 	if len(r.Web.Index) == 0 {
 		r.Web.Index = []string{"index.html"}
 	}
@@ -149,6 +193,7 @@ func defaultWebRoute(r *alaye.Route) {
 	defaultCompression(&r.Compression)
 	defaultHeaders(&r.Headers)
 	defaultBasicAuth(&r.BasicAuth)
+	defaultProtect(&r.Protect)
 	defaultJWTAuth(&r.JWTAuth)
 	defaultForwardAuth(&r.ForwardAuth)
 	defaultOAuth(&r.OAuth)
@@ -162,6 +207,7 @@ func defaultProxyRoute(r *alaye.Route) {
 	defaultCompression(&r.Compression)
 	defaultHeaders(&r.Headers)
 	defaultBasicAuth(&r.BasicAuth)
+	defaultProtect(&r.Protect)
 	defaultJWTAuth(&r.JWTAuth)
 	defaultForwardAuth(&r.ForwardAuth)
 	defaultOAuth(&r.OAuth)
@@ -242,6 +288,33 @@ func defaultAdmin(a *alaye.Admin) {
 		if a.TOTP.Algorithm == "" {
 			a.TOTP.Algorithm = "SHA1"
 		}
+	}
+}
+
+func defaultMCP(m *alaye.MCP) {
+	if m.Enabled == expect.Unknown {
+		m.Enabled = expect.Inactive
+	}
+	if m.Transport == "" {
+		m.Transport = def.MCPTransportStdio
+	}
+	if m.RateLimit == "" {
+		m.RateLimit = "60/m"
+	}
+	if len(m.AllowedIPs) == 0 {
+		m.AllowedIPs = []string{"127.0.0.1/32", "::1/128"}
+	}
+	if m.Read.Enabled == expect.Unknown {
+		m.Read.Enabled = expect.Inactive
+	}
+	if m.Plan.Enabled == expect.Unknown {
+		m.Plan.Enabled = expect.Inactive
+	}
+	if m.Plan.MaxInputBytes == 0 {
+		m.Plan.MaxInputBytes = def.HostConfigMaxBytes
+	}
+	if m.Apply.Enabled == expect.Unknown {
+		m.Apply.Enabled = expect.Inactive
 	}
 }
 
@@ -496,6 +569,15 @@ func defaultCompression(c *alaye.Compression) {
 	}
 }
 
+func defaultProtect(a *alaye.Protect) {
+	if a.Enabled == expect.Unknown && (len(a.Users) > 0 || a.Title != "") {
+		a.Enabled = expect.Active
+	}
+	if a.SessionTTL <= 0 {
+		a.SessionTTL = expect.Duration(def.ProtectSessionTTL)
+	}
+}
+
 func defaultBasicAuth(ba *alaye.BasicAuth) {
 	if ba.Enabled == expect.Unknown && len(ba.Users) > 0 {
 		ba.Enabled = expect.Active
@@ -704,18 +786,30 @@ func defaultGit(g *alaye.Git) {
 	if g.Enabled.NotActive() {
 		return
 	}
+	g.Mode = strings.ToLower(strings.TrimSpace(g.Mode))
+	if g.Mode == "" {
+		g.Mode = def.GitModeAuto
+	}
 	if g.Branch == "" {
 		g.Branch = "main"
 	}
-	hasPull := g.Interval > 0
-	hasPush := g.Secret.String() != ""
-	switch {
-	case hasPull && hasPush:
-		g.Mode = def.GitModeBoth
-	case hasPush:
-		g.Mode = def.GitModePush
-	case hasPull:
-		g.Mode = def.GitModePull
+}
+
+func defaultRelay(r *alaye.Relay) {
+	if r.Listen.Address == "" {
+		r.Listen.Address = "0.0.0.0"
+	}
+	if r.Listen.Protocol == "" {
+		r.Listen.Protocol = "https"
+	}
+	if r.Auth.Method == "" {
+		r.Auth.Method = "enrollment"
+	}
+}
+
+func defaultAgent(a *alaye.Agent) {
+	if a.Pool <= 0 {
+		a.Pool = 8
 	}
 }
 
@@ -838,4 +932,19 @@ func defaultDNSBlock(d *alaye.DNSBlock) {
 	if d.Mode == "" {
 		d.Mode = "nxdomain"
 	}
+}
+
+// resolveWAFRulesDir makes relative WAF rule paths independent of the process
+// working directory. A service or a shell whose cwd was removed must still be
+// able to load rules relative to agbero.hcl.
+func resolveWAFRulesDir(g *alaye.Global, configPath string) {
+	dir := strings.TrimSpace(g.Security.WAF.RulesDir)
+	if dir == "" || filepath.IsAbs(dir) || strings.TrimSpace(configPath) == "" {
+		return
+	}
+	base, err := filepath.Abs(filepath.Dir(configPath))
+	if err != nil {
+		return
+	}
+	g.Security.WAF.RulesDir = filepath.Join(base, dir)
 }

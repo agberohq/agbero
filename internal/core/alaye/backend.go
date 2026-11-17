@@ -1,6 +1,8 @@
 package alaye
 
 import (
+	"strings"
+
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
@@ -48,5 +50,5 @@ func (b Backend) IsZero() bool {
 // HasTunnel reports whether this backend routes through a tunnel (either
 // inline or via a named reference).
 func (b Backend) HasTunnel() bool {
-	return b.Via != "" || b.Tunnel != ""
+	return strings.TrimSpace(b.Via) != "" || strings.TrimSpace(b.Tunnel) != ""
 }

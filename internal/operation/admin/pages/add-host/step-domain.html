@@ -110,10 +110,79 @@
 
         <div>
             <label class="wz-label">Max request body size (bytes)</label>
-            <input type="number" id="wzMaxBodySize" class="wz-input" placeholder="0 = global default" min="0">
+            <input type="number" id="wzMaxBodySize" class="wz-input" placeholder="0 = global default (100 MiB)" min="0">
+            <div class="wz-hint">Bytes. Leave 0 to inherit the global 100 MiB default.</div>
             <div class="wz-hint">Largest upload accepted for this host, in bytes. 0 uses the global setting.
                 Header size is a global limit (<code>general.max_header_bytes</code>).</div>
         </div>
 
+    </div>
+</details>
+
+<!-- Relay accordion -->
+<details class="wz-field-group" id="wzRelayOptions" style="margin-top:8px;">
+    <summary style="font-size:13px;font-weight:500;cursor:pointer;user-select:none;padding:8px 0;">
+        Relay <span style="font-size:11px;font-weight:400;color:var(--text-mute);">— publish this host through a relay, or run one</span>
+    </summary>
+    <div style="padding-top:12px;display:flex;flex-direction:column;gap:12px;">
+        <div class="wz-radio-group" id="wzRelayModeGroup">
+            <label class="wz-radio"><input type="radio" name="relay_mode" value="" checked><span>None</span></label>
+            <label class="wz-radio"><input type="radio" name="relay_mode" value="agent"><span>Publish through a relay (this machine has no public address)</span></label>
+            <label class="wz-radio"><input type="radio" name="relay_mode" value="server"><span>Serve a relay on this host (agents connect here)</span></label>
+        </div>
+
+        <div id="wzRelayAgentFields" style="display:none;flex-direction:column;gap:10px;">
+            <div style="display:flex;gap:8px;">
+                <div style="flex:1;"><label class="wz-label">Agent name <span style="color:var(--danger)">*</span></label>
+                    <input type="text" id="wzRelayAgentName" class="wz-input" placeholder="alice" spellcheck="false"></div>
+                <div style="flex:2;"><label class="wz-label">Relay URL <span style="color:var(--danger)">*</span></label>
+                    <input type="text" id="wzRelayAgentURL" class="wz-input" placeholder="https://relay.example.com:8443" spellcheck="false"></div>
+            </div>
+            <div class="wz-hint" style="margin-top:-4px;">The agent name must be unique on the relay. Two agbero instances with the same name replace each other's session.</div>
+            <div><label class="wz-label">Enrollment secret <span style="color:var(--danger)">*</span></label>
+                <input type="text" id="wzRelayAgentEnroll" class="wz-input" placeholder="ss://tunnel/relay" spellcheck="false">
+                <div class="wz-hint">A Keeper reference (<code>ss://…</code>) is recommended; it must match the relay's enrollment token.</div></div>
+            <div><label class="wz-label">Local target</label>
+                <input type="text" id="wzRelayAgentLocal" class="wz-input" placeholder="blank = derived from this host's bind (https://127.0.0.1:443)" spellcheck="false">
+                <label class="wz-check" style="margin-top:6px;"><input type="checkbox" id="wzRelayAgentInsecure"> Skip TLS verification for the local target</label></div>
+            <div style="display:flex;gap:8px;align-items:flex-end;">
+                <div style="flex:1;"><label class="wz-label">Public ID <span style="color:var(--danger)">*</span></label>
+                    <input type="text" id="wzRelayExposeID" class="wz-input" placeholder="show" spellcheck="false"></div>
+                <label class="wz-check" style="flex:1;"><input type="checkbox" id="wzRelayExposePath" checked> Path (<code>relay/&lt;id&gt;</code>)</label>
+                <label class="wz-check" style="flex:1;"><input type="checkbox" id="wzRelayExposeSub"> Subdomain (<code>&lt;id&gt;.relay</code>)</label>
+            </div>
+            <div class="wz-hint">The first route is exposed. Lowercase letters, digits and dashes; not admin, api, www, mail or relay.</div>
+        </div>
+
+        <div id="wzRelayServerFields" style="display:none;flex-direction:column;gap:10px;">
+            <div style="display:flex;gap:8px;">
+                <div style="flex:1;"><label class="wz-label">Relay name</label>
+                    <input type="text" id="wzRelayServerName" class="wz-input" placeholder="agents"></div>
+                <div style="flex:1;"><label class="wz-label">Listen address</label>
+                    <input type="text" id="wzRelayServerAddress" class="wz-input" placeholder="0.0.0.0"></div>
+                <div style="flex:1;"><label class="wz-label">Port</label>
+                    <input type="number" id="wzRelayServerPort" class="wz-input" placeholder="8443" min="1" max="65535"></div>
+            </div>
+            <div><label class="wz-label">Enrollment token <span style="color:var(--danger)">*</span></label>
+                <input type="text" id="wzRelayServerToken" class="wz-input" placeholder="ss://tunnel/relay" spellcheck="false">
+                <div class="wz-hint">Agents present this to enroll. Store it in Keeper and reference it with <code>ss://…</code>.</div></div>
+            <div style="display:flex;gap:16px;">
+                <label class="wz-check"><input type="checkbox" id="wzRelayServerHTTP" checked> Allow path exposures</label>
+                <label class="wz-check"><input type="checkbox" id="wzRelayServerSub"> Allow subdomain exposures</label>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <div style="flex:1;"><label class="wz-label">Allowed TCP ports</label>
+                    <input type="text" id="wzRelayServerTCP" class="wz-input" placeholder="15432, 20000-20100"></div>
+                <div style="flex:1;"><label class="wz-label">Allowed UDP ports</label>
+                    <input type="text" id="wzRelayServerUDP" class="wz-input" placeholder="15353"></div>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <div style="flex:1;"><label class="wz-label">Max agents</label>
+                    <input type="number" id="wzRelayServerMaxAgents" class="wz-input" placeholder="100" min="0"></div>
+                <div style="flex:1;"><label class="wz-label">Max streams per agent</label>
+                    <input type="number" id="wzRelayServerMaxStreams" class="wz-input" placeholder="1000" min="0"></div>
+            </div>
+            <div class="wz-hint">Don't add an agent for this relay to the relay host's own config: it would compete with the real agent for the same name.</div>
+        </div>
     </div>
 </details>

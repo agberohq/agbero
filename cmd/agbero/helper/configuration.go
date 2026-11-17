@@ -118,7 +118,7 @@ func (c *Configuration) Edit(configFile string) error {
 		candidates = append(candidates, editor)
 	}
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == def.Windows {
 		candidates = append(candidates, "notepad")
 	} else {
 		candidates = append(candidates, "nano", "vi", "vim")

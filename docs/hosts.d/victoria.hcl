@@ -1,3 +1,9 @@
+# =============================================================================
+# VictoriaMetrics / VictoriaLogs UI
+# =============================================================================
+# The UI is an HTTP reverse proxy. Streaming is enabled so long-running query
+# or log-tail responses are flushed rather than buffered.
+
 domains = ["victoria.localhost"]
 
 route "/*" {

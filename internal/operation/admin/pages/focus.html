@@ -1,0 +1,121 @@
+<div class="page active focus-page">
+    <style>
+        /* Wallboard: one host, live numbers, readable from across a room. */
+        .fw-head { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+        .fw-id { display:flex; align-items:center; gap:14px; min-width:0; }
+        .fw-host { margin:0; font-size:clamp(20px,2.6vw,40px); font-weight:600; letter-spacing:-.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fw-status { font-size:clamp(11px,1vw,15px); font-weight:600; padding:4px 12px; border-radius:999px; text-transform:uppercase; letter-spacing:.6px; }
+        .fw-status.ok   { background:rgba(34,197,94,.14);  color:var(--success); }
+        .fw-status.warn { background:rgba(234,179,8,.16);  color:var(--warning); }
+        .fw-status.down { background:rgba(239,68,68,.16);  color:var(--danger); }
+        .fw-status.idle { background:var(--hover-bg);      color:var(--text-mute); }
+        .fw-sub { font-family:var(--font-mono); font-size:11px; color:var(--text-mute); margin-top:2px; }
+        .fw-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .fw-controls select { min-width:120px; }
+        .fw-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+        .fw-tab { background:none; border:0; border-bottom:2px solid transparent; color:var(--text-mute); padding:8px 12px; cursor:pointer; font:inherit; font-size:12px; }
+        .fw-tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:500; }
+        .fw-panel { display:none; } .fw-panel.active { display:block; }
+
+        .fw-kpis { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
+        .fw-kpi { background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:14px 16px; min-width:0; }
+        .fw-kpi-label { font-size:clamp(10px,.8vw,13px); text-transform:uppercase; letter-spacing:.6px; color:var(--text-mute); }
+        .fw-kpi-value { font-size:clamp(22px,2.8vw,48px); font-weight:600; line-height:1.1; margin-top:6px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .fw-kpi-value small { font-size:.45em; font-weight:500; color:var(--text-mute); margin-left:4px; }
+        .fw-kpi-foot { font-size:11px; color:var(--text-mute); margin-top:4px; font-family:var(--font-mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fw-kpi.bad .fw-kpi-value { color:var(--danger); } .fw-kpi.warn .fw-kpi-value { color:var(--warning); }
+
+        .fw-charts { display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:14px; }
+        .fw-card { background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:12px 14px; min-width:0; }
+        .fw-card h3 { margin:0 0 8px; font-size:11px; letter-spacing:.6px; text-transform:uppercase; color:var(--text-mute); font-weight:500; display:flex; justify-content:space-between; gap:8px; }
+        .fw-chart { height:clamp(150px,22vh,320px); }
+
+        .fw-routes { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:12px; }
+        .fw-route-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:8px; }
+        .fw-route-path { font-family:var(--font-mono); font-size:clamp(13px,1.1vw,18px); font-weight:600; }
+        .fw-route-meta { font-size:11px; color:var(--text-mute); font-family:var(--font-mono); white-space:nowrap; }
+        .fw-be { display:grid; grid-template-columns:10px minmax(0,1fr) auto; gap:8px; align-items:center; padding:5px 0; border-top:1px solid var(--border); font-size:12px; }
+        .fw-be-url { font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .fw-be-nums { font-family:var(--font-mono); font-size:11px; color:var(--text-mute); white-space:nowrap; }
+        .fw-share { grid-column:2 / 4; height:3px; background:var(--hover-bg); border-radius:2px; overflow:hidden; margin-top:-2px; }
+        .fw-share i { display:block; height:100%; background:var(--accent); }
+        .fw-dot { width:10px; height:10px; border-radius:50%; background:var(--text-mute); }
+        .fw-dot.ok { background:var(--success); } .fw-dot.warn { background:var(--warning); } .fw-dot.down { background:var(--danger); }
+        .fw-empty { color:var(--text-mute); font-size:12px; padding:10px 0; }
+
+        .fw-table { width:100%; border-collapse:collapse; font-size:12px; }
+        .fw-table th, .fw-table td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+        .fw-table th { color:var(--text-mute); font-weight:500; text-transform:uppercase; font-size:10px; letter-spacing:.4px; }
+        .fw-log { font-family:var(--font-mono); font-size:12px; max-height:60vh; overflow:auto; }
+        .fw-log-row { padding:3px 0; border-bottom:1px solid var(--border); }
+
+        body.focus-kiosk .navbar, body.focus-kiosk .nav-mobile-drawer { display:none !important; }
+        body.focus-kiosk .main-content { padding:20px 28px !important; max-width:none !important; }
+        body.focus-kiosk .fw-tabs, body.focus-kiosk .fw-hide-kiosk { display:none !important; }
+        @media (max-width:1100px) { .fw-kpis { grid-template-columns:repeat(3,minmax(0,1fr)); } .fw-charts { grid-template-columns:1fr; } }
+    </style>
+
+    <div class="fw-head">
+        <div class="fw-id">
+            <div style="min-width:0;">
+                <h2 class="fw-host" id="fwHost">—</h2>
+                <div class="fw-sub" id="fwSub">connecting…</div>
+            </div>
+            <span class="fw-status idle" id="fwStatus">—</span>
+        </div>
+        <div class="fw-controls">
+            <select id="fwHostSelect" class="wz-input fw-hide-kiosk" title="Host"></select>
+            <select id="fwWindow" class="wz-input" title="Live window">
+                <option value="300">Last 5 min</option>
+                <option value="900">Last 15 min</option>
+            </select>
+            <button class="btn small fw-hide-kiosk" id="fwPause">Pause</button>
+            <button class="btn small" id="fwKiosk" title="Full-screen wallboard (Esc to leave)">Kiosk</button>
+            <button class="btn small fw-hide-kiosk" id="fwOpen" title="Open in a new tab for a second screen">↗</button>
+        </div>
+    </div>
+
+    <div class="fw-tabs" role="tablist">
+        <button class="fw-tab active" data-fw-tab="live">Live</button>
+        <button class="fw-tab" data-fw-tab="backends">Backends</button>
+        <button class="fw-tab" data-fw-tab="history">History</button>
+        <button class="fw-tab" data-fw-tab="logs">Logs</button>
+    </div>
+
+    <section class="fw-panel active" data-fw-panel="live">
+        <div class="fw-kpis" id="fwKpis"></div>
+        <div class="fw-charts">
+            <div class="fw-card"><h3><span>Requests / sec</span><span id="fwRpsNote"></span></h3><div class="fw-chart" id="fwRpsChart"></div></div>
+            <div class="fw-card"><h3><span>Latency p99 (ms)</span></h3><div class="fw-chart" id="fwP99Chart"></div></div>
+            <div class="fw-card"><h3><span>Errors / sec</span></h3><div class="fw-chart" id="fwErrChart"></div></div>
+        </div>
+        <div class="fw-routes" id="fwRoutes"></div>
+    </section>
+
+    <section class="fw-panel" data-fw-panel="backends">
+        <div class="fw-card" style="overflow:auto;">
+            <table class="fw-table" id="fwBackendTable">
+                <thead><tr><th>Route</th><th>Backend</th><th>State</th><th>Req/s</th><th>Requests</th><th>Failures</th><th>p50</th><th>p99</th><th>In-flight</th><th>Bytes</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="fw-panel" data-fw-panel="history">
+        <div class="fw-card" style="margin-bottom:12px;">
+            <h3><span>Requests / sec — stored history</span>
+                <select id="fwRange" class="wz-input" style="max-width:120px;">
+                    <option value="30m">30m</option><option value="1h" selected>1h</option><option value="6h">6h</option><option value="24h">24h</option>
+                </select></h3>
+            <div class="fw-chart" id="fwHistReqs"></div>
+        </div>
+        <div class="fw-charts" style="grid-template-columns:1fr 1fr;">
+            <div class="fw-card"><h3><span>p99 (ms)</span></h3><div class="fw-chart" id="fwHistP99"></div></div>
+            <div class="fw-card"><h3><span>Error rate (%)</span></h3><div class="fw-chart" id="fwHistErr"></div></div>
+        </div>
+    </section>
+
+    <section class="fw-panel" data-fw-panel="logs">
+        <div class="fw-card"><div class="fw-log" id="fwLogs"><div class="fw-empty">Loading…</div></div></div>
+    </section>
+</div>

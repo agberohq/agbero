@@ -1,3 +1,13 @@
+# =============================================================================
+# Admin / dashboard host
+# =============================================================================
+# Proxies the local Agbero admin listener. Keep this host on a private
+# interface or restrict it with allowed_ips; the admin API is not a public
+# website.
+#
+# The request timeout is intentionally longer than a normal page request
+# because /logs and /uptime can take a moment to gather data.
+
 domains = ["admin.localhost"]
 
 

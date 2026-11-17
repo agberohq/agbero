@@ -67,7 +67,46 @@ export default async function({ find, findAll, on, onUnmount, ready, props, inje
     find('#wzMaxBodySize')?.addEventListener('input',   e=>wizard.draftSet('host_max_body_size',e.target.value?parseInt(e.target.value):0));
     find('[data-field="host_protected"]')?.querySelectorAll('.wz-ts-opt').forEach(btn=>{btn.addEventListener('click',()=>{btn.closest('.wz-tristate')?.querySelectorAll('.wz-ts-opt').forEach(b=>b.classList.remove('active'));btn.classList.add('active');wizard.draftSet('host_protected',btn.dataset.val);});});
 
+    // Relay
+    const _relayText={wzRelayAgentName:'relay_agent_name',wzRelayAgentURL:'relay_agent_url',wzRelayAgentEnroll:'relay_agent_enroll',wzRelayAgentLocal:'relay_agent_local',wzRelayExposeID:'relay_expose_id',wzRelayServerName:'relay_server_name',wzRelayServerAddress:'relay_server_address',wzRelayServerPort:'relay_server_port',wzRelayServerToken:'relay_server_token',wzRelayServerTCP:'relay_server_tcp_ports',wzRelayServerUDP:'relay_server_udp_ports',wzRelayServerMaxAgents:'relay_server_max_agents',wzRelayServerMaxStreams:'relay_server_max_streams'};
+    const _relayCheck={wzRelayAgentInsecure:['relay_agent_local_insecure',false],wzRelayExposePath:['relay_expose_path',true],wzRelayExposeSub:['relay_expose_subdomain',false],wzRelayServerHTTP:['relay_server_allow_http',true],wzRelayServerSub:['relay_server_allow_subdomain',false]};
+    function _applyRelayVisibility(){
+        const mode=wizard.draftGet('relay_mode')||'';
+        const a=find('#wzRelayAgentFields'),sv=find('#wzRelayServerFields');
+        if(a)a.style.display=mode==='agent'?'flex':'none';
+        if(sv)sv.style.display=mode==='server'?'flex':'none';
+        if(mode&&find('#wzRelayOptions'))find('#wzRelayOptions').open=true;
+    }
+    Object.entries(_relayText).forEach(([id,key])=>{const el=find('#'+id);if(!el)return;if(d[key]!=null)el.value=d[key];el.addEventListener('input',e=>wizard.draftSet(key,e.target.value));});
+    Object.entries(_relayCheck).forEach(([id,[key,def]])=>{const el=find('#'+id);if(!el||!key)return;el.checked=d[key]!=null?!!d[key]:def;el.addEventListener('change',e=>wizard.draftSet(key,e.target.checked));});
+    if(d.relay_mode){const r=find(`[name="relay_mode"][value="${d.relay_mode}"]`);if(r)r.checked=true;}
+    findAll('[name="relay_mode"]').forEach(r=>r.addEventListener('change',()=>{wizard.draftSet('relay_mode',r.value);_applyRelayVisibility();}));
+    _applyRelayVisibility();
+
+    function _validateRelay(){
+        const g=k=>(wizard.draftGet(k)||'').toString().trim();
+        const idRe=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/, reserved=['admin','api','www','mail','relay','_agbero','well-known'];
+        const mode=wizard.draftGet('relay_mode')||'';
+        if(mode==='agent'){
+            if(!idRe.test(g('relay_agent_name')))return{msg:'Agent name: lowercase letters, digits and dashes',field:'wzRelayAgentName'};
+            if(!/^https?:\/\/[^/]+/.test(g('relay_agent_url')))return{msg:'Relay URL must start with https://',field:'wzRelayAgentURL'};
+            if(!g('relay_agent_enroll'))return{msg:'Enrollment secret is required',field:'wzRelayAgentEnroll'};
+            const id=g('relay_expose_id');
+            if(!idRe.test(id)||reserved.includes(id))return{msg:'Public ID: a single DNS label, not a reserved name',field:'wzRelayExposeID'};
+            if(wizard.draftGet('relay_expose_path')===false&&wizard.draftGet('relay_expose_subdomain')!==true)return{msg:'Choose path, subdomain, or both',field:'wzRelayExposePath'};
+            if(wizard.draftGet('host_type')==='tcp')return{msg:'Relay publishing applies to HTTP routes; TCP hosts are not supported here yet',field:'wzRelayExposeID'};
+        }
+        if(mode==='server'){
+            if(!g('relay_server_token'))return{msg:'Enrollment token is required',field:'wzRelayServerToken'};
+            const port=Number(g('relay_server_port')||8443);
+            if(!(port>0&&port<65536))return{msg:'Port must be 1–65535',field:'wzRelayServerPort'};
+        }
+        return null;
+    }
+
     emit('wizard:set-validate',{validate:()=>{
+        const relayErr=_validateRelay();
+        if(relayErr)return relayErr;
         const dom=(wizard.draftGet('domain')||'').trim();
         if(!dom)return{msg:'Domain is required',field:'wzDomainInput'};
         if(dom.includes('://'))return{msg:'Domain must not include a protocol prefix',field:'wzDomainInput'};

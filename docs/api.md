@@ -1,6 +1,6 @@
 # Agbero API Reference: Dynamic Route Management
 
-The Agbero API allows you to create and manage routes dynamically without writing HCL files. Routes created via the API are ephemeral, can have time-to-live (TTL) values, and are automatically distributed across your entire cluster.
+The Agbero API allows you to create and manage routes dynamically without writing HCL files. Routes created via the API are ephemeral, can have time-to-live (TTL) values, and are broadcast to connected Agbero peers. Each peer stores the route locally and serves it independently; an offline peer catches up when it rejoins.
 
 ## Core Use Case: Dynamic Load Balancing
 
@@ -32,8 +32,8 @@ Instead of manually creating HCL files for every new service deployment, you can
 
 1. A service (or orchestrator) calls the Agbero API
 2. The route is stored in the cluster's gossip state with key `route:host|path`
-3. All nodes in the cluster receive the route automatically via gossip
-4. Traffic is immediately load-balanced to the new service
+3. Connected peers receive the route via gossip and store it locally
+4. Traffic is load-balanced to the new service by whichever node receives it
 5. Routes expire after TTL if not renewed
 
 ---
@@ -617,7 +617,7 @@ Example response:
 |---------|------------------------|------------|
 | **Persistence** | Persistent on disk | Ephemeral, expires with TTL |
 | **Management** | Manual file edits | Programmatic API |
-| **Distribution** | File sync (manual/SCM) | Automatic cluster gossip |
+| **Distribution** | File sync (manual/SCM) | Broadcast to connected peers; offline peers catch up on join |
 | **Use Case** | Permanent services | Dynamic/temporary services |
 | **TTL Support** | No | Yes |
 | **Auto-cleanup** | No | Yes (on expiry) |
@@ -743,6 +743,56 @@ data.
 * The request body is capped at 4 MiB (`def.HostConfigMaxBytes`); larger uploads
   return `413`. The same cap applies to `POST /api/v1/discovery/preview` (both
   the request body and the rendered HCL response).
+
+---
+
+## Route Auth API — Managing Basic and Protect Users
+
+These endpoints back the Admin UI's **Intercept** page. They edit the
+`basic_auth` or `protect` block of one route, generate bcrypt hashes on the
+server, and store those hashes in Keeper. Raw HCL is mutated with `hclwrite` and
+written atomically, so comments and unrelated blocks survive an edit.
+
+All endpoints require an admin JWT and live under `/api/v1/auth/`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/auth/{domain}` | Return route auth metadata (never hashes) |
+| `PUT` | `/api/v1/auth/{domain}/config` | Update enabled/realm or title/session_ttl/cookie_name |
+| `POST` | `/api/v1/auth/{domain}/users` | Add a user and its bcrypt hash to Keeper |
+| `PUT` | `/api/v1/auth/{domain}/users` | Reset a user's password |
+| `DELETE` | `/api/v1/auth/{domain}/users` | Remove a user and its Keeper secret |
+
+`mode` is `basic` or `protect`; `route` is the route path label (for example
+`/admin`). User endpoints accept:
+
+```json
+{
+  "route": "/admin",
+  "mode": "protect",
+  "username": "alice",
+  "password": "a-long-password"
+}
+```
+
+The response never contains the password or hash:
+
+```json
+{
+  "status": "ok",
+  "host": "admin.example.com",
+  "route": "/admin",
+  "mode": "protect",
+  "username": "alice",
+  "source": "keeper",
+  "ref": "ss://auth/admin.example.com/admin/protect/alice",
+  "keeper_key": "auth/admin.example.com/admin/protect/alice"
+}
+```
+
+`GET /api/v1/auth/{domain}` reports inline entries as `source: "inline"` without
+their value, and Keeper entries as `source: "keeper"` with their key path. If
+Keeper is locked, user writes return `423 Locked`; config-only edits still work.
 
 ---
 

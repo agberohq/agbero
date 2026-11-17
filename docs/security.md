@@ -36,31 +36,44 @@ The keeper is Agbero's built-in encrypted, passphrase-protected database. It is 
 - TLS certificates and private keys
 - Any secrets you store manually via `agbero keeper set` or the Keeper REST API
 
-**The keeper is a required component.** Agbero will not start if the keeper database cannot be opened. This is intentional — it prevents the proxy from running with missing or inaccessible credentials.
+**The keeper is a required component.** If it cannot be opened, Agbero does not serve secret-dependent traffic. A service may start in a locked/standby state so an operator can unlock it; it does not pretend to be fully operational while locked.
 
 ### Unlocking the Keeper
 
 Agbero resolves the master passphrase in this order at startup:
 
-1. `keeper.passphrase` field in `agbero.hcl` (may be an `env.` or `ss://` reference)
-2. `keeper.passphrase_file` (`0600` or `0640 root:agbero`)
-3. `AGBERO_KEEPER_PASSPHRASE` environment variable
-4. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
-5. Interactive terminal prompt
+1. systemd credential `$CREDENTIALS_DIRECTORY/keeper_passphrase`
+2. `keeper.passphrase` in `agbero.hcl` (prefer an `env.` or `ss://` reference)
+3. legacy `keeper.passphrase_file` (existing deployments only)
+4. `AGBERO_KEEPER_PASSPHRASE` environment variable
+5. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
+6. interactive terminal prompt
+7. if none are available, a service starts **locked** and waits for `agbero keeper unlock`
 
-For unattended deployments (system service, Docker container, CI/CD), use `keeper.passphrase_file` or the canonical environment variable. The interactive prompt will not appear in non-terminal contexts — Agbero will fail to start instead.
+`agbero init` no longer writes a passphrase file. Keeping the key next to `keeper.db` defeats at-rest encryption, so new installs do not create one.
+
+Recommended unattended setup:
+
+```ini
+# systemd unit
+LoadCredentialEncrypted=keeper_passphrase:/etc/agbero/keeper.cred
+```
 
 ```bash
-# Most common production approach — set the env var before starting
+# or runtime injection
 AGBERO_KEEPER_PASSPHRASE=mypassphrase agbero run
-
-# Or configure it in agbero.hcl (use env var to keep the actual value out of the file)
-security {
-  keeper {
-    passphrase = "env.AGBERO_KEEPER_PASSPHRASE"
-  }
-}
 ```
+
+Manual unlock:
+
+```bash
+sudo agbero service start
+agbero keeper unlock
+```
+
+`agbero service start` / `agbero service restart` prompt for the passphrase after starting a locked service. Direct `systemctl restart agbero` cannot prompt; run `agbero keeper unlock` afterward.
+
+`LoadCredentialEncrypted` is preferred over `LoadCredential`: the latter's source is plaintext on disk, even though systemd copies it to a tmpfs at runtime.
 
 ### First-time Setup
 
@@ -89,7 +102,7 @@ security {
 
     # Automatically lock the keeper after this period of inactivity.
     # Once locked, ss:// references return their literal string and log a warning
-    # until you unlock via POST /api/v1/keeper/unlock.
+    # until you unlock with `agbero keeper unlock` (or the loopback-only API).
     auto_lock = "1h"
 
     # Log every keeper operation (open, read, write, delete) at INFO level
@@ -275,14 +288,15 @@ If `locked` is `true`, secret resolution is suspended. Unlock it before proceedi
 
 ### Unlock the Keeper
 
-Use this when the keeper has been locked (by `auto_lock`, a server restart with wrong passphrase, or manually).
+Use this when the keeper has been locked (by `auto_lock`, or a service restart without a stored credential):
 
 ```bash
-curl -X POST http://localhost:9090/api/v1/keeper/unlock \
-  -H "Authorization: Bearer <admin-token>" \
-  -H "Content-Type: application/json" \
-  -d '{"passphrase": "mypassphrase"}'
+sudo agbero keeper unlock
 ```
+
+The command prompts without echo and sends the passphrase over a root-only local control channel. It never writes the passphrase to disk or puts it in an environment variable.
+
+`POST /api/v1/keeper/unlock` still exists for local bootstrap tooling, but it is loopback-only and requires the process to be running in locked mode. Prefer `agbero keeper unlock`.
 
 Response:
 ```json
@@ -534,7 +548,9 @@ agbero admin totp setup --user alice
 agbero admin totp setup --user alice --out qr-alice.png
 ```
 
-Scan the QR code with your authenticator app. You will not be able to retrieve it again — if lost, run `totp setup` again to regenerate.
+Scan the QR code with your authenticator app. On image-capable terminals (iTerm2, Kitty, WezTerm, Ghostty) the QR is rendered as an image; elsewhere Agbero prints a high-contrast ANSI QR. Override detection with `AGBERO_QR=image` or `AGBERO_QR=ansi`.
+
+The terminal also prints the Base32 secret and `otpauth://` URI; if the QR cannot be rendered or scanned, enter the secret manually. The secret is shown once — if lost, run `totp setup` again to regenerate.
 
 ### Enable TOTP in Configuration
 

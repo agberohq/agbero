@@ -23,6 +23,7 @@ type Global struct {
 	General  General `hcl:"general,block" json:"general"`
 
 	Admin Admin `hcl:"admin,block" json:"admin"`
+	MCP   MCP   `hcl:"mcp,block" json:"mcp"`
 
 	API         API         `hcl:"api,block" json:"api"`
 	Logging     Logging     `hcl:"logging,block" json:"logging"`
@@ -46,6 +47,9 @@ func (g *Global) Validate() error {
 	}
 	if err := g.Admin.Validate(); err != nil {
 		return errors.Newf("admin: %w", err)
+	}
+	if err := g.MCP.Validate(); err != nil {
+		return errors.Newf("mcp: %w", err)
 	}
 
 	if err := g.API.Validate(); err != nil {

@@ -71,7 +71,7 @@ func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	var primary http.Handler
 	if route.Serverless.Enabled.Active() {
 		primary = xserverless.NewWithNonces(cfg, route, nonceStores)
-	} else if route.Web.Root.IsSet() || route.Web.Git.Enabled.Active() {
+	} else if route.Web.Root.IsSet() || route.Web.Git.Enabled.Active() || len(route.Web.Mounts) > 0 {
 		primary = web.NewWebWithNonces(cfg.Resource, route, cfg.CookMgr, nonceStores)
 	} else {
 		return newProxyRoute(cfg, route)
@@ -110,6 +110,7 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 	}
 	chain = auth.JWT(&route.JWTAuth)(chain)
 	chain = auth.Basic(&route.BasicAuth, cfg.Resource.Logger)(chain)
+	chain = auth.Protect(&route.Protect, route.Path, cfg.Resource, cfg.Resource.Logger)(chain)
 	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
 

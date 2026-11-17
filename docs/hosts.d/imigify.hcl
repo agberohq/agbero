@@ -1,3 +1,12 @@
+# =============================================================================
+# Image service + support site
+# =============================================================================
+# /api is the weighted image-processing pool. /support is a separate random
+# pool. The static frontend is served from /var/www/imigify.
+#
+# Weighted routing is useful when one image worker has more capacity; random
+# is acceptable for the independent support service.
+
 domains = ["imigify.localhost"]
 
 route "/api" {

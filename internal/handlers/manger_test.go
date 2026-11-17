@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -823,5 +825,61 @@ func TestManager_createH3Listener_Success(t *testing.T) {
 	}
 	if listener.Kind() != "h3" {
 		t.Errorf("Expected kind 'h3', got %q", listener.Kind())
+	}
+}
+
+func TestManager_handleRequest_ServesSiteFavicon(t *testing.T) {
+	root := t.TempDir()
+	const icon = "site-owned-favicon"
+	if err := os.WriteFile(filepath.Join(root, "favicon.ico"), []byte(icon), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testManagerConfig(t)
+	cfg.HostManager.Set("site.example", &alaye.Host{
+		Domains: []string{"site.example"},
+		Routes:  []alaye.Route{{Path: "/", Web: alaye.Web{Root: alaye.WebRoot(root)}}},
+	})
+
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	req := httptest.NewRequest("GET", "/favicon.ico", nil)
+	req.Host = "site.example"
+	w := httptest.NewRecorder()
+	m.handleRequest(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Body.String(); got != icon {
+		t.Fatalf("body = %q, want site favicon", got)
+	}
+}
+
+func TestManager_shouldLogPath(t *testing.T) {
+	cfg := testManagerConfig(t)
+	cfg.Global.Logging.Enabled = expect.Active
+	cfg.Global.Logging.Skip = []string{"/health"}
+	cfg.Global.Logging.Include = []string{"/api"}
+
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	for path, want := range map[string]bool{
+		"/api/v1":      true,
+		"/api":         true,
+		"/other":       false,
+		"/health":      false,
+		"/api/health":  true,
+		"/health/live": false,
+	} {
+		if got := m.shouldLogPath(path); got != want {
+			t.Errorf("shouldLogPath(%q) = %v, want %v", path, got, want)
+		}
 	}
 }

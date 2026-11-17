@@ -1,6 +1,8 @@
 package xudp
 
 import (
+	"context"
+	"errors"
 	"net"
 	"runtime"
 	"sync/atomic"
@@ -10,6 +12,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/lifecycle"
 	resource "github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
 	"github.com/olekukonko/ll"
@@ -382,5 +385,71 @@ func TestPickBackend_UsesRoutingHashForConsistentHashing(t *testing.T) {
 	if len(seen) < 2 {
 		t.Errorf("routingHash=0: only %d backend(s) selected in %d calls — random fallback broken: %v",
 			len(seen), iterations, seen)
+	}
+}
+
+func TestStopCtxBoundedWhenAdmittedWorkIsStuck(t *testing.T) {
+	p := NewProxy(testRes(), "127.0.0.1:0")
+	if !p.life.Admit() {
+		t.Fatal("Admit failed")
+	}
+	defer p.life.Release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := p.StopCtx(ctx)
+	if !errors.Is(err, lifecycle.ErrDrainTimeout) {
+		t.Fatalf("StopCtx = %v, want ErrDrainTimeout", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("StopCtx exceeded bound: %v", time.Since(start))
+	}
+}
+
+func TestProxy_CountsUDPDatagramsAndBytes(t *testing.T) {
+	echo, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		buf := make([]byte, 64)
+		for {
+			n, addr, err := echo.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			_, _ = echo.WriteToUDP(buf[:n], addr)
+		}
+	}()
+
+	res := testRes()
+	p := NewProxy(res, "127.0.0.1:0")
+	p.AddRoute("*", alaye.Proxy{Backends: []alaye.Server{alaye.NewServer(echo.LocalAddr().String())}})
+	be := p.def.selector.Backends()[0].(*Backend)
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer p.Stop()
+
+	conn := dialUDP(t, p.Listen)
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Write([]byte("datagram")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	if _, err := conn.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for be.Activity.Datagrams.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if be.Activity.Datagrams.Load() < 2 {
+		t.Fatalf("datagrams = %d, want request + reply", be.Activity.Datagrams.Load())
+	}
+	if be.Activity.BytesIn.Load() == 0 || be.Activity.BytesOut.Load() == 0 {
+		t.Fatalf("bytes not counted: in=%d out=%d", be.Activity.BytesIn.Load(), be.Activity.BytesOut.Load())
 	}
 }

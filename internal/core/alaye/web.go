@@ -1,6 +1,7 @@
 package alaye
 
 import (
+	"path"
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/def"
@@ -22,11 +23,52 @@ type Web struct {
 	// Example: "public, max-age=31536000, s-maxage=604800"
 	CacheControl string `hcl:"cache_control,attr" json:"cache_control,omitempty"`
 
-	PHP      PHP      `hcl:"php,block,omitempty"      json:"php,omitempty"`
-	Git      Git      `hcl:"git,block,omitempty"      json:"git,omitempty"`
-	Markdown Markdown `hcl:"markdown,block,omitempty" json:"markdown,omitempty"`
-	Nonce    WebNonce `hcl:"nonce,block,omitempty"    json:"nonce,omitempty"`
+	PHP      PHP        `hcl:"php,block,omitempty"      json:"php,omitempty"`
+	Git      Git        `hcl:"git,block,omitempty"      json:"git,omitempty"`
+	Markdown Markdown   `hcl:"markdown,block,omitempty" json:"markdown,omitempty"`
+	Nonce    WebNonce   `hcl:"nonce,block,omitempty"    json:"nonce,omitempty"`
+	Mounts   []WebMount `hcl:"mount,block"             json:"mounts,omitempty"`
 }
+
+// WebMount serves a path prefix from its own root or Git deployment. Mounts are
+// matched longest-prefix-first and the matched prefix is stripped before the
+// request is resolved against the mount root.
+type WebMount struct {
+	Path string  `hcl:"path,label" json:"path"`
+	Root WebRoot `hcl:"root,attr" json:"root,omitempty"`
+	Git  Git     `hcl:"git,block,omitempty" json:"git,omitempty"`
+}
+
+func (m *WebMount) Validate() error {
+	m.Path = strings.TrimSpace(m.Path)
+	if m.Path == "" {
+		return errors.New("web mount: path is required")
+	}
+	if !strings.HasPrefix(m.Path, "/") {
+		return errors.Newf("web mount %q: path must start with '/'", m.Path)
+	}
+	if strings.ContainsAny(m.Path, "*?{}#\\ \t\r\n") {
+		return errors.Newf("web mount %q: path contains unsupported characters", m.Path)
+	}
+	for _, part := range strings.Split(m.Path, "/") {
+		if part == ".." {
+			return errors.Newf("web mount %q: path must not contain '..'", m.Path)
+		}
+	}
+	m.Path = path.Clean(m.Path)
+	if m.Path == "/" {
+		return errors.New("web mount: path must not be '/' (use the web root for the primary mount)")
+	}
+	if err := m.Git.Validate(); err != nil {
+		return errors.Newf("web mount %q: git: %w", m.Path, err)
+	}
+	if m.Git.Enabled.NotActive() && !m.Root.IsSet() {
+		return errors.Newf("web mount %q: root or an enabled git block is required", m.Path)
+	}
+	return nil
+}
+
+func (m WebMount) IsZero() bool { return m.Path == "" && !m.Root.IsSet() && m.Git.IsZero() }
 
 func (w *Web) Validate() error {
 	if w.Enabled.NotActive() {
@@ -35,7 +77,28 @@ func (w *Web) Validate() error {
 	if err := w.Git.Validate(); err != nil {
 		return errors.Newf("git: %w", err)
 	}
-	if w.Git.Enabled.NotActive() && !w.Root.IsSet() {
+	seenMounts := make(map[string]bool, len(w.Mounts))
+	seenGitIDs := make(map[string]bool, len(w.Mounts)+1)
+	if w.Git.Enabled.Active() {
+		seenGitIDs[w.Git.ID] = true
+	}
+	for i := range w.Mounts {
+		m := &w.Mounts[i]
+		if err := m.Validate(); err != nil {
+			return err
+		}
+		if seenMounts[m.Path] {
+			return errors.Newf("web mount %q: duplicate path", m.Path)
+		}
+		seenMounts[m.Path] = true
+		if m.Git.Enabled.Active() {
+			if seenGitIDs[m.Git.ID] {
+				return errors.Newf("web mount %q: duplicate git id %q", m.Path, m.Git.ID)
+			}
+			seenGitIDs[m.Git.ID] = true
+		}
+	}
+	if w.Git.Enabled.NotActive() && !w.Root.IsSet() && len(w.Mounts) == 0 {
 		return def.ErrRootRequired
 	}
 	for _, idx := range w.Index {
@@ -63,7 +126,8 @@ func (w Web) IsZero() bool {
 		w.PHP.IsZero() &&
 		w.Git.IsZero() &&
 		w.Markdown.IsZero() &&
-		w.Nonce.IsZero()
+		w.Nonce.IsZero() &&
+		len(w.Mounts) == 0
 }
 
 // WebNonce configures single-use nonce injection for replay authentication.

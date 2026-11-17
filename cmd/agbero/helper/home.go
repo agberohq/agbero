@@ -6,9 +6,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -139,7 +141,7 @@ func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 		}
 	}
 
-	h.p.Logger.Info("starting uninstall sequence")
+	h.p.UI().Info("starting uninstall sequence")
 
 	// Step 1: Backup prompt.
 	h.promptBackup(configPath, force)
@@ -148,9 +150,9 @@ func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 	// Stop is warn-only (may already be stopped).
 	// Uninstall delegates to Service helper which has the root check.
 	if svc != nil {
-		h.p.Logger.Info("stopping system service")
+		h.p.UI().Info("stopping system service")
 		if err := svc.Stop(); err != nil {
-			h.p.Logger.Warnf("service stop: %v (may already be stopped)", err)
+			h.p.UI().Warnf("service stop: %v (may already be stopped)", err)
 		}
 		h.p.Service().Uninstall(svc)
 	}
@@ -161,7 +163,7 @@ func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 	h.p.Cert().Uninstall(configPath)
 
 	// Step 4: Wipe all data (keeper.db, hosts, certs on disk, logs, work, config).
-	h.deleteDataDirectories()
+	h.deleteDataDirectories(configPath)
 
 	// Step 5: Binary only with --force.
 	if force {
@@ -180,7 +182,7 @@ func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 // All UI goes through ui.Confirm — huh is never called directly.
 func (h *Home) promptBackup(configPath string, force bool) {
 	if force {
-		h.p.Logger.Warn("force mode: skipping backup prompt")
+		h.p.UI().Warn("force mode: skipping backup prompt")
 		return
 	}
 
@@ -190,36 +192,84 @@ func (h *Home) promptBackup(configPath string, force bool) {
 		"A backup lets you restore agbero later. The service must be stopped first.",
 	)
 	if err != nil || !doBackup {
-		h.p.Logger.Info("backup skipped")
+		h.p.UI().Info("backup skipped")
 		return
 	}
 
 	sys := setup.NewSystem(setup.SystemConfig{Logger: h.p.Logger})
 	if err := sys.Backup(configPath, "", ""); err != nil {
-		h.p.Logger.Warnf("backup failed: %v — continuing with uninstall", err)
+		h.p.UI().Warnf("backup failed: %v — continuing with uninstall", err)
 	}
 }
 
-func (h *Home) deleteDataDirectories() {
-	ctx := setup.NewContext(h.p.Logger)
-	baseDir := ctx.Paths.BaseDir.Path()
-	h.p.Logger.Infof("deleting all agbero data in %s", baseDir)
-	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
-		h.p.Logger.Info("data directory does not exist, nothing to remove")
-		return
+func (h *Home) deleteDataDirectories(configPath string) {
+	roots := map[string]struct{}{}
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		p = filepath.Clean(p)
+		switch p {
+		case "", ".", string(filepath.Separator), "/etc", "/var", "/usr", "/home", "/root", "/tmp":
+			return
+		}
+		roots[p] = struct{}{}
 	}
-	if err := os.RemoveAll(baseDir); err != nil {
-		h.p.Logger.Warnf("could not fully remove %s: %v — manual cleanup may be required", baseDir, err)
-	} else {
-		h.p.Logger.Infof("removed %s", baseDir)
+
+	if configPath != "" {
+		base := filepath.Dir(configPath)
+		if isAgberoTree(base) {
+			add(base)
+		} else {
+			// Do not delete an arbitrary parent directory just because a
+			// custom config file lives in it.
+			add(configPath)
+		}
+	}
+	if global, err := loadGlobal(configPath); err == nil {
+		if global.Storage.HostsDir.IsSet() {
+			add(global.Storage.HostsDir.Path())
+		}
+		if global.Storage.CertsDir.IsSet() {
+			add(global.Storage.CertsDir.Path())
+		}
+		if global.Storage.DataDir.IsSet() {
+			add(global.Storage.DataDir.Path())
+		}
+		if global.Storage.WorkDir.IsSet() {
+			add(global.Storage.WorkDir.Path())
+		}
+	}
+	if len(roots) == 0 {
+		ctx := setup.NewContext(h.p.Logger)
+		add(ctx.Paths.BaseDir.Path())
+	}
+
+	var paths []string
+	for p := range roots {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			continue
+		}
+		h.p.UI().Infof("removing %s", p)
+		if err := os.RemoveAll(p); err != nil {
+			h.p.UI().Warnf("could not fully remove %s: %v — manual cleanup may be required", p, err)
+		}
 	}
 }
 
 func (h *Home) deleteBinary() {
-	h.p.Logger.Info("removing agbero binary")
+	h.p.UI().Info("removing agbero binary")
 	execPath, err := os.Executable()
 	if err != nil {
-		h.p.Logger.Warnf("could not determine binary path: %v", err)
+		h.p.UI().Warnf("could not determine binary path: %v", err)
 		return
 	}
 	resolved, err := filepath.EvalSymlinks(execPath)
@@ -227,11 +277,11 @@ func (h *Home) deleteBinary() {
 		resolved = execPath
 	}
 	if err := os.Remove(resolved); err != nil {
-		h.p.Logger.Warnf("could not remove binary at %s: %v", resolved, err)
+		h.p.UI().Warnf("could not remove binary at %s: %v", resolved, err)
 		fmt.Printf("\nManual removal required: rm -f %s\n", resolved)
 		return
 	}
-	h.p.Logger.Infof("removed binary at %s", resolved)
+	h.p.UI().Infof("removed binary at %s", resolved)
 	fmt.Println("\nagbero has been completely uninstalled.")
 }
 
@@ -272,7 +322,7 @@ func (h *Home) openTLSStore(configPath string) tlsstore.Store {
 			}
 		}
 	}
-	h.p.Logger.Warn("could not open TLS store for CA removal — CA may need manual trust store cleanup")
+	h.p.UI().Warn("could not open TLS store for CA removal — CA may need manual trust store cleanup")
 	return tlsstore.NewMemory()
 }
 
@@ -281,17 +331,33 @@ func (h *Home) open(dir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to resolve path: %w", err)
 	}
+
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
-	case "windows":
+	case def.Windows:
 		cmd = exec.Command("explorer", dir)
-	case "darwin":
+	case def.Darwin:
 		cmd = exec.Command("open", dir)
 	default:
+		if !zulu.IsDisplayServerRunningLinux() {
+			return fmt.Errorf("no graphical display detected: please open %s manually", dir)
+		}
+		if _, err := exec.LookPath("xdg-open"); err != nil {
+			return fmt.Errorf("xdg-open not found: please open %s manually", dir)
+		}
 		cmd = exec.Command("xdg-open", dir)
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to open directory: %w", err)
 	}
 	return nil
+}
+
+func isAgberoTree(dir string) bool {
+	for _, name := range []string{"hosts.d", "data.d", "certs.d", "keeper.db"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }

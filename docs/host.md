@@ -133,9 +133,10 @@ route "/" {
       id       = "frontend_app"
       url      = "https://github.com/org/repo.git"
       branch   = "main"
+      mode     = "both"           # auto (default), pull, push, both
       sub_dir  = "dist"           # Serve from this subdirectory
-      interval = "5m"              # Polling interval
-      secret   = "${env.WEBHOOK_SECRET}"  # For webhook verification
+      interval = "5m"              # Polling interval (pull/both)
+      secret   = "${env.WEBHOOK_SECRET}"  # Webhook secret (push/both)
       
       auth {
         type = "ssh-key"           # "basic", "ssh-key", "ssh-agent"
@@ -152,12 +153,105 @@ route "/" {
 }
 ```
 
+Git deployment modes:
+
+| `mode` | Trigger | Required fields |
+|--------|---------|-----------------|
+| `auto` | Derives from `interval`/`secret` (default; no behaviour change) | at least one of `interval`, `secret` |
+| `pull` | Poll the repository | `url`, `interval` |
+| `push` | Webhook deploys on push | `secret`; `url` is optional for push-only |
+| `both` | Poll and accept webhooks | `url`, `interval`, `secret` |
+
+`auto` is the default when `mode` is omitted, so existing configurations keep
+working unchanged.
+
 **Webhook Endpoint:**
 ```
 POST /.well-known/agbero/webhook/git/frontend_app
 Headers:
   X-Hub-Signature-256: sha256=<hmac>
 ```
+
+### Multiple Sites on One Route
+
+Use `mount` blocks when several static roots or Git repos should live under one
+route. Mounts are matched longest-prefix-first and their prefix is stripped
+before serving:
+
+```hcl
+route "/" {
+  web {
+    root = "/var/www/wo"          # optional fallback
+
+    mount "/site1" {
+      git {
+        enabled  = "on"
+        mode     = "pull"
+        id       = "wo-site1"
+        url      = "https://github.com/org/site1.git"
+        interval = "5m"
+
+        # Private repo: HTTPS personal access token.
+        # "x-access-token" is a placeholder USERNAME, not the token.
+        # The actual token (or its Keeper reference) goes in password.
+        auth {
+          type     = "basic"
+          username = "x-access-token"
+          password = "ss://deploy/github-site1-token"
+        }
+
+        # Or SSH deploy key:
+        # auth {
+        #   type               = "ssh-key"
+        #   ssh_key            = "ss://deploy/github-site1-ssh-key"
+        #   ssh_key_passphrase = "ss://deploy/github-site1-key-passphrase"
+        # }
+      }
+    }
+
+    mount "/site2" {
+      git {
+        enabled = "on"
+        mode    = "push"
+        id      = "wo-site2"
+        url     = "https://github.com/org/site2.git"
+        secret  = "ss://integrations/github/site2"
+      }
+    }
+
+    mount "/docs" {
+      root = "/var/www/docs"      # plain static mount
+    }
+  }
+}
+```
+
+A request for `/site1/app.js` serves `<site1 deployment>/app.js`. A request for
+an unmatched path, such as `/other`, falls back to `web.root`; if no primary
+root is configured it returns 404.
+
+Each mount has its own `git.id`, authentication, and webhook endpoint. The same
+`git.auth` block used by the primary Git source is available inside every
+mount:
+
+- **HTTPS token** — `type = "basic"`, set `username` (often `x-access-token`)
+  and `password` to the token.
+- **SSH deploy key** — `type = "ssh-key"`, set `ssh_key`.
+- **SSH agent** — `type = "ssh-agent"`, using the server process's
+  `SSH_AUTH_SOCK`.
+- **Public repo** — omit `auth`.
+
+Store tokens and private keys in Keeper and reference them with `ss://...`.
+
+Each mount has its own `git.id` and webhook endpoint:
+
+```
+POST /.well-known/agbero/webhook/git/wo-site1
+POST /.well-known/agbero/webhook/git/wo-site2
+```
+
+The parent `web` block's `index`, `listing`, `spa`, `markdown`, `php`, `cache`,
+and nonce settings apply to all mounts.
 
 ---
 

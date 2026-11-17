@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -133,4 +134,36 @@ func XXHash(data []byte) string {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], xxhash.Sum64(data))
 	return base64.RawURLEncoding.EncodeToString(buf[:])
+}
+
+// IsDisplayServerRunningLinux scans the active process entries in /proc to look for X11 or Wayland.
+func IsDisplayServerRunningLinux() bool {
+	// DISPLAY and WAYLAND_DISPLAY also cover X11 forwarding over SSH, while
+	// scanning /proc only finds a locally running server.
+	if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
+		return true
+	}
+
+	files, err := os.ReadDir("/proc")
+	if err != nil {
+		return false
+	}
+
+	for _, file := range files {
+		// Only numeric directory names are process IDs.
+		if !file.IsDir() || file.Name()[0] < '0' || file.Name()[0] > '9' {
+			continue
+		}
+
+		comm, err := os.ReadFile("/proc/" + file.Name() + "/comm")
+		if err != nil {
+			continue
+		}
+
+		procName := strings.TrimSpace(string(comm))
+		if procName == "Xorg" || strings.Contains(procName, "wayland") {
+			return true
+		}
+	}
+	return false
 }

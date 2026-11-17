@@ -1,0 +1,86 @@
+<div class="page active routes-page">
+    <style>
+        .rm-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:12px; }
+        .rm-title { margin:0; font-size:20px; letter-spacing:-.02em; font-family:var(--font-mono); }
+        .rm-sub { margin-top:4px; font-size:11px; color:var(--text-mute); }
+        .rm-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .rm-controls select { min-width:200px; }
+        .rm-chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+        .rm-chip { background:var(--panel-bg); border:1px solid var(--border); border-radius:999px; color:var(--text-mute); padding:5px 11px; font:inherit; font-size:11px; cursor:pointer; font-family:var(--font-mono); }
+        .rm-chip:hover { color:var(--text-main); border-color:var(--text-mute); }
+        .rm-chip.active { color:var(--accent); border-color:var(--accent); background:rgba(59,130,246,.08); }
+        .rm-chip small { font-family:var(--font-sans,inherit); opacity:.75; margin-left:4px; }
+        .rm-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:16px; overflow:auto; }
+        .rm-tab { background:none; border:0; border-bottom:2px solid transparent; color:var(--text-mute); padding:8px 12px; cursor:pointer; font:inherit; font-size:12px; white-space:nowrap; }
+        .rm-tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:500; }
+        .rm-tab .rm-count { font-size:10px; opacity:.7; margin-left:4px; }
+        .rm-panel { display:none; } .rm-panel.active { display:block; }
+        .rm-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; margin-bottom:12px; }
+        .rm-box { background:var(--panel-bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; min-width:0; }
+        .rm-box h3 { margin:0 0 8px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text-mute); display:flex; justify-content:space-between; align-items:center; gap:8px; }
+        .rm-kv { display:grid; grid-template-columns:minmax(120px,max-content) minmax(0,1fr); gap:4px 14px; font-size:12px; }
+        .rm-kv dt { color:var(--text-mute); font-family:var(--font-mono); font-size:11px; }
+        .rm-kv dd { margin:0; font-family:var(--font-mono); word-break:break-all; }
+        .rm-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }
+        .rm-stat { background:var(--panel-bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+        .rm-stat b { display:block; font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; }
+        .rm-stat span { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-mute); }
+        .rm-table { width:100%; border-collapse:collapse; font-size:12px; }
+        .rm-table th, .rm-table td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--border); }
+        .rm-table th { color:var(--text-mute); font-weight:500; text-transform:uppercase; font-size:10px; letter-spacing:.4px; }
+        .rm-table tr.sel td { background:rgba(59,130,246,.08); }
+        .rm-table tbody tr { cursor:pointer; }
+        .rm-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:var(--text-mute); }
+        .rm-dot.ok { background:var(--success); } .rm-dot.warn { background:var(--warning); } .rm-dot.down { background:var(--danger); }
+        .rm-badges { display:flex; gap:5px; flex-wrap:wrap; }
+        .rm-empty { color:var(--text-mute); font-size:12px; padding:8px 0; }
+        .rm-actions { display:flex; gap:8px; flex-wrap:wrap; }
+        .rm-hcl { font-family:var(--font-mono); font-size:12px; line-height:1.55; white-space:pre; overflow:auto; max-height:65vh; margin:0; }
+        .rm-chart { height:220px; }
+        @media (max-width:900px) { .rm-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    </style>
+
+    <div class="rm-head">
+        <div>
+            <h2 class="rm-title" id="rmTitle">Routes</h2>
+            <div class="rm-sub" id="rmSub">Pick a host and a route.</div>
+        </div>
+        <div class="rm-controls">
+            <select id="rmHost" class="wz-input" title="Host"></select>
+            <button class="btn small" id="rmFocus" title="Open this host's wallboard">Focus</button>
+            <button class="btn small" id="rmEditHcl">Edit HCL</button>
+        </div>
+    </div>
+
+    <div class="rm-chips" id="rmChips"></div>
+
+    <div class="rm-tabs" role="tablist" id="rmTabs">
+        <button class="rm-tab active" data-rm-tab="overview">Overview</button>
+        <button class="rm-tab" data-rm-tab="backends">Backends <span class="rm-count" id="rmBeCount"></span></button>
+        <button class="rm-tab" data-rm-tab="access">Access</button>
+        <button class="rm-tab" data-rm-tab="policy">Traffic policy</button>
+        <button class="rm-tab" data-rm-tab="cache">Cache</button>
+        <button class="rm-tab" data-rm-tab="hcl">HCL</button>
+    </div>
+
+    <section class="rm-panel active" data-rm-panel="overview"><div id="rmOverview"></div></section>
+    <section class="rm-panel" data-rm-panel="backends">
+        <div class="rm-box" style="margin-bottom:12px;overflow:auto;">
+            <table class="rm-table" id="rmBeTable"><thead><tr><th>Backend</th><th>State</th><th>Weight</th><th>Requests</th><th>Failures</th><th>p50</th><th>p99</th><th>In-flight</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="rm-box">
+            <h3><span id="rmBeChartTitle">Backend history</span>
+                <select id="rmBeRange" class="wz-input" style="max-width:110px;"><option value="30m">30m</option><option value="1h" selected>1h</option><option value="6h">6h</option><option value="24h">24h</option></select></h3>
+            <div class="rm-chart" id="rmBeChart"></div>
+        </div>
+    </section>
+    <section class="rm-panel" data-rm-panel="access"><div id="rmAccess"></div></section>
+    <section class="rm-panel" data-rm-panel="policy"><div id="rmPolicy"></div></section>
+    <section class="rm-panel" data-rm-panel="cache"><div id="rmCache"></div></section>
+    <section class="rm-panel" data-rm-panel="hcl">
+        <div class="rm-box">
+            <h3><span>Route block</span><span class="rm-actions"><button class="btn small" id="rmCopyHcl">Copy</button><button class="btn small" id="rmEditHcl2">Edit host HCL</button></span></h3>
+            <pre class="rm-hcl" id="rmHcl">Loading…</pre>
+        </div>
+    </section>
+</div>

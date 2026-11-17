@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,19 +27,24 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers"
 	"github.com/agberohq/agbero/internal/hub/cluster"
+	"github.com/agberohq/agbero/internal/hub/control"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
+	relayhub "github.com/agberohq/agbero/internal/hub/relay"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/operation/api"
+	agmcp "github.com/agberohq/agbero/internal/operation/mcp"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/agberohq/keeper"
+	"github.com/agberohq/oshodi"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -63,6 +71,10 @@ type Server struct {
 	cookManager    *cook.Manager
 	trafficManager *handlers.Manager
 
+	relayServers    []*relayhub.Server
+	relayDispatcher *relayhub.Dispatcher
+	relayCancel     context.CancelFunc
+
 	shutdown *jack.Shutdown
 
 	firewall    *firewall.Engine
@@ -71,8 +83,10 @@ type Server struct {
 	telemetryStore     *telemetry.Store
 	telemetryCollector *telemetry.Collector
 
-	adminSrv *http.Server
-	pprofSrv *http.Server
+	adminSrv      *http.Server
+	pprofSrv      *http.Server
+	controlPath   string
+	controlServer *control.Server
 
 	keeperStore   *keeper.Keeper
 	revokeStore   *revoke.Store
@@ -80,10 +94,17 @@ type Server struct {
 
 	totpHandler *api.TOTP
 	apiShared   *api.Shared
+
+	mcpSrv       *sdk.Server
+	mcpToken     *agmcp.TokenStore
+	mcpTokens    *agmcp.TokenRegistry
+	mcpStats     *agmcp.Stats
+	mcpAudit     *agmcp.Auditor
+	mcpStartedAt time.Time
 }
 
 func NewServer(opts ...Option) *Server {
-	s := &Server{}
+	s := &Server{mcpStartedAt: time.Now()}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -226,6 +247,11 @@ func (s *Server) Start(configPath string) error {
 				if r.Web.Git.Enabled.Active() {
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
+				for _, mount := range r.Web.Mounts {
+					if mount.Git.Enabled.Active() {
+						s.registerGitConfig(mount.Git, seenGitConfigs)
+					}
+				}
 
 				if r.Serverless.Git.Enabled.Active() {
 					if !s.global.Security.Allow.ServerlessGit.Active() {
@@ -332,6 +358,29 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
+	if s.revokeStore != nil {
+		if reg, err := agmcp.OpenTokenRegistryBucket(s.revokeStore.DB()); err == nil {
+			s.mcpTokens = reg
+		} else {
+			s.logger.Fields("err", err).Warn("mcp token registry unavailable")
+		}
+	}
+
+	if s.controlPath != "" {
+		cs := control.NewServer(s.controlPath)
+		cs.Handle("revoke.add", s.controlRevoke)
+		cs.Handle("token.registry.add", s.controlTokenAdd)
+		cs.Handle("token.registry.list", s.controlTokenList)
+		if err := cs.Start(); err != nil {
+			return errors.Newf("control socket: %w", err)
+		}
+		s.controlServer = cs
+		if s.shutdown != nil {
+			s.shutdown.RegisterFunc("ControlSocket", func() { _ = cs.Close() })
+		}
+		s.logger.Fields("socket", s.controlPath).Info("local control socket started")
+	}
+
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global, s.keeperStore)
 	if s.shutdown != nil {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
@@ -344,6 +393,8 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	s.tlsManager.PreloadLocalCertificates(hosts)
+
+	s.startRelay(hosts, s.tlsManager)
 
 	var trustedProxies []string
 	if s.global.Security.Enabled.Active() {
@@ -369,6 +420,7 @@ func (s *Server) Start(configPath string) error {
 		SharedState: s.sharedState,
 		OrchManager: s.orchManager,
 		TunnelPools: tunnelPools,
+		Relay:       s.relayDispatcher,
 	}
 
 	tm, err := handlers.NewManager(tmCfg)
@@ -394,6 +446,7 @@ func (s *Server) Start(configPath string) error {
 		Telemetry:     s.telemetryStore,
 		RevokeStore:   s.revokeStore,
 		UpdateChecker: s.updateChecker,
+		Relay:         s.relayDispatcher,
 	}
 
 	s.apiShared.UpdateState(&api.ActiveState{
@@ -427,6 +480,10 @@ func (s *Server) Start(configPath string) error {
 				s.logger.Fields("err", err, "bind", listener.Addr()).Error("listener failed")
 			}
 		}(l)
+	}
+
+	if s.shutdown != nil {
+		s.shutdown.RegisterFunc("Relay", s.stopRelay)
 	}
 
 	if configPath != "" {
@@ -517,6 +574,13 @@ func (s *Server) Reload() {
 		newTLSManager.SetCluster(s.clusterManager)
 	}
 
+	// Rebuild relays before the traffic manager so the new dispatcher is
+	// installed in the replacement manager. Existing relay listeners are
+	// stopped only after the new config has parsed successfully.
+	hosts, _ := s.hostManager.LoadAll()
+	s.stopRelay()
+	s.startRelay(hosts, newTLSManager)
+
 	// Rebuild tunnel pools from the reloaded global config.
 	var reloadedTunnelPools map[string]*tunnel.Pool
 	reloadedTunnelPools, err = buildTunnelPools(global.Tunnels, s.logger)
@@ -539,6 +603,7 @@ func (s *Server) Reload() {
 		SharedState: newSharedState,
 		OrchManager: s.orchManager,
 		TunnelPools: reloadedTunnelPools,
+		Relay:       s.relayDispatcher,
 	}
 
 	s.mu.RLock()
@@ -586,6 +651,7 @@ func (s *Server) Reload() {
 	s.listeners = newListeners
 	s.mu.Unlock()
 
+	s.apiShared.Relay = s.relayDispatcher
 	s.apiShared.UpdateState(&api.ActiveState{
 		Global:   global,
 		Firewall: newTM.Firewall(),
@@ -596,7 +662,6 @@ func (s *Server) Reload() {
 		s.totpHandler = api.NewTOTP(s.apiShared)
 	}
 
-	hosts, _ := s.hostManager.LoadAll()
 	validKeys := make(map[alaye.Key]bool)
 	validRouteKeys := make(map[string]bool)
 
@@ -636,6 +701,12 @@ func (s *Server) Reload() {
 					validGitIDs[r.Web.Git.ID] = true
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
+				for _, mount := range r.Web.Mounts {
+					if mount.Git.Enabled.Active() {
+						validGitIDs[mount.Git.ID] = true
+						s.registerGitConfig(mount.Git, seenGitConfigs)
+					}
+				}
 				if r.Serverless.Git.Enabled.Active() {
 					if !s.global.Security.Allow.ServerlessGit.Active() {
 						s.logger.Fields("git_id", r.Serverless.Git.ID).Error(
@@ -666,7 +737,7 @@ func (s *Server) Reload() {
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), def.DefaultReloadTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), def.DefaultReloadDrainTimeout)
 		defer cancel()
 
 		var wg sync.WaitGroup
@@ -674,7 +745,10 @@ func (s *Server) Reload() {
 			wg.Add(1)
 			go func(oldListener handlers.Listener) {
 				defer wg.Done()
-				_ = oldListener.Stop(ctx)
+				if err := oldListener.Stop(ctx); err != nil {
+					s.logger.Fields("bind", oldListener.Addr(), "proto", oldListener.Kind(), "err", err).
+						Warn("old listener did not drain cleanly")
+				}
 			}(l)
 		}
 		wg.Wait()
@@ -738,11 +812,21 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	s.mu.RUnlock()
 
 	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
 	for _, l := range listeners {
 		wg.Add(1)
 		go func(listener handlers.Listener) {
 			defer wg.Done()
-			_ = listener.Stop(ctx)
+			if err := listener.Stop(ctx); err != nil {
+				s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind(), "err", err).
+					Warn("listener did not drain cleanly")
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+			}
 		}(l)
 	}
 	wg.Wait()
@@ -753,13 +837,67 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	s.mu.RUnlock()
 
 	if adminSrv != nil {
-		_ = adminSrv.Shutdown(ctx)
+		if err := adminSrv.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	if pprofSrv != nil {
-		_ = pprofSrv.Shutdown(ctx)
+		if err := pprofSrv.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
-	return nil
+	return firstErr
+}
+
+type controlRevokeRequest struct {
+	JTI       string    `json:"jti"`
+	Service   string    `json:"service"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (s *Server) controlTokenAdd(_ context.Context, raw json.RawMessage) (any, error) {
+	if s.mcpTokens == nil {
+		return nil, errors.New("MCP token registry unavailable")
+	}
+	var rec agmcp.TokenRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, err
+	}
+	if rec.JTI == "" {
+		return nil, errors.New("jti is required")
+	}
+	if err := s.mcpTokens.Add(rec); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"ok": true}, nil
+}
+
+func (s *Server) controlTokenList(context.Context, json.RawMessage) (any, error) {
+	if s.mcpTokens == nil {
+		return nil, errors.New("MCP token registry unavailable")
+	}
+	return s.mcpTokens.List(), nil
+}
+
+func (s *Server) controlRevoke(_ context.Context, raw json.RawMessage) (any, error) {
+	if s.revokeStore == nil {
+		return nil, errors.New("revocation store unavailable")
+	}
+	var req controlRevokeRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.JTI == "" {
+		return nil, errors.New("jti is required")
+	}
+	if req.ExpiresAt.IsZero() {
+		req.ExpiresAt = time.Now().Add(def.DefaultControlRevokeTTL)
+	}
+	if err := s.revokeStore.Revoke(req.JTI, req.Service, req.ExpiresAt); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"ok": true}, nil
 }
 
 func (s *Server) configComputeSHA() (string, error) {
@@ -824,11 +962,155 @@ func (s *Server) serverWatchConfig() {
 	}
 }
 
+// stopRelay tears down the active relay listeners and agent loops.
+func (s *Server) stopRelay() {
+	s.mu.Lock()
+	cancel := s.relayCancel
+	servers := s.relayServers
+	s.relayCancel = nil
+	s.relayServers = nil
+	s.relayDispatcher = nil
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	for _, rs := range servers {
+		_ = rs.Close()
+	}
+}
+
+// startRelay builds remote relay listeners and local agents from the loaded
+// hosts. Relay-only hosts are valid and have no normal routes.
+func (s *Server) startRelay(hosts map[string]*alaye.Host, tlsMgr *tlss.Manager) {
+	var servers []*relayhub.Server
+	ctx, cancel := context.WithCancel(context.Background())
+
+	for _, hcfg := range hosts {
+		for _, rcfg := range hcfg.Relays {
+			if len(hcfg.Domains) == 0 {
+				continue
+			}
+			listen := net.JoinHostPort(rcfg.Listen.Address, strconv.Itoa(rcfg.Listen.Port))
+			var relayDB *oshodi.DB
+			if s.revokeStore != nil {
+				relayDB = s.revokeStore.DB()
+			}
+			rs := relayhub.NewServer(relayhub.ServerConfig{
+				Name:            rcfg.Name,
+				BaseDomain:      hcfg.Domains[0],
+				Listen:          listen,
+				AuthMethod:      rcfg.Auth.Method,
+				EnrollTokenFunc: func() string { return rcfg.Auth.Token.String() },
+				Policy:          rcfg.Policy,
+				TLSConfig: &tls.Config{
+					GetCertificate: tlsMgr.GetCertificate,
+					MinVersion:     tls.VersionTLS12,
+				},
+				Logger: s.logger,
+				DB:     relayDB,
+				RegisterHost: func(domain string) {
+					h := &alaye.Host{
+						Domains: []string{domain},
+						Bind:    hcfg.Bind,
+						TLS:     hcfg.TLS,
+					}
+					s.hostManager.SetRuntime(domain, h)
+				},
+				UnregisterHost: func(domain string) {
+					s.hostManager.SetRuntime(domain, nil)
+				},
+			})
+			if err := rs.Start(); err != nil {
+				s.logger.Fields("relay", rcfg.Name, "listen", listen, "err", err).Error("relay listener failed")
+				continue
+			}
+			servers = append(servers, rs)
+		}
+	}
+	s.mu.Lock()
+	s.relayServers = servers
+	s.relayDispatcher = relayhub.NewDispatcher(servers)
+	s.relayCancel = cancel
+	s.mu.Unlock()
+
+	for _, hcfg := range hosts {
+		for _, acfg := range hcfg.Agents {
+			var exposes []alaye.Expose
+			for _, r := range hcfg.Routes {
+				for _, ex := range r.Exposes {
+					if ex.Via != acfg.Name {
+						continue
+					}
+					if ex.LocalPath == "" {
+						ex.LocalPath = "/"
+					}
+					exposes = append(exposes, ex)
+				}
+			}
+			if len(exposes) == 0 {
+				continue
+			}
+			for i := range exposes {
+				if exposes[i].LocalHost == "" && len(hcfg.Domains) > 0 {
+					exposes[i].LocalHost = hcfg.Domains[0]
+				}
+			}
+			localURL, localSNI, localInsecure := relayhub.ResolveLocal(hcfg, acfg)
+			if localSNI == "" {
+				for _, ex := range exposes {
+					if ex.LocalHost != "" {
+						localSNI = ex.LocalHost
+						break
+					}
+				}
+			}
+			credentialKey := "relay/agents/" + acfg.Name + "/credential"
+			loadCredential := func() string {
+				if s.keeperStore == nil {
+					return ""
+				}
+				b, err := s.keeperStore.Get(credentialKey)
+				if err != nil {
+					return ""
+				}
+				return string(b)
+			}
+			saveCredential := func(v string) error {
+				if s.keeperStore == nil {
+					return nil
+				}
+				if err := s.keeperStore.EnsureBucket(credentialKey); err != nil {
+					return err
+				}
+				return s.keeperStore.Set(credentialKey, []byte(v))
+			}
+			client := relayhub.NewClient(relayhub.ClientConfig{
+				Agent:           acfg.Name,
+				Relay:           acfg.Relay,
+				Enroll:          acfg.Enroll.String(),
+				EnrollTokenFunc: func() string { return acfg.Enroll.String() },
+				Token:           acfg.Token.String(),
+				Local:           localURL,
+				LocalSNI:        localSNI,
+				LocalInsecure:   localInsecure,
+				Insecure:        acfg.Insecure,
+				Pool:            acfg.Pool,
+				Exposes:         exposes,
+				LoadCredential:  loadCredential,
+				SaveCredential:  saveCredential,
+				Logger:          s.logger,
+			})
+			go client.Run(ctx)
+		}
+	}
+}
+
 func (s *Server) registerGitConfig(cfg alaye.Git, seen map[string]alaye.Git) {
 	gitID := cfg.ID
 	if existing, exists := seen[gitID]; exists {
 
-		if existing.URL != cfg.URL || existing.Branch != cfg.Branch || existing.WorkDir != cfg.WorkDir {
+		if existing.URL != cfg.URL || existing.Branch != cfg.Branch ||
+			existing.WorkDir != cfg.WorkDir || existing.Mode != cfg.Mode {
 			s.logger.Fields("id", gitID).Warn("server: git ID collision with differing configurations, skipping duplicate")
 		}
 		return

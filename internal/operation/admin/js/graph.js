@@ -25,6 +25,11 @@
 (function () {
     'use strict';
 
+    var ROUTE_PROTOCOLS = (typeof window !== 'undefined' && window.ROUTE_PROTOCOLS) || {
+        HTTP: 'http',
+        MCP: 'mcp'
+    };
+
     var NS = 'http://www.w3.org/2000/svg';
 
     var GLYPH = { root: '\u25C8', host: '\u25A4', route: '\u21E2', backend: '\u25CF', serverless: '\u2699' };
@@ -36,6 +41,9 @@
     var MIN_REFRESH = 0.5;   // seconds — below this an rps sample is too noisy
     var MIN_FIT = 0.55;      // fit() never scales below this; pan/collapse instead
     var AUTO_COLLAPSE_AT = 18;  // topology nodes before hosts start collapsed
+    var IDLE_GROUP_AT = 4;      // idle hosts before they fold into one group node
+    var IDLE_GROUP_ID = '__idle__';
+    var FOCUS_TOP = 12;         // busiest nodes the first view zooms to
 
     function el(name, attrs) {
         var node = document.createElementNS(NS, name);
@@ -54,6 +62,11 @@
     // them into node objects). Everything downstream must accept both shapes.
     function endpointId(end) {
         return end && typeof end === 'object' ? end.id : end;
+    }
+
+    function worstStatus(a, b) {
+        var rank = { ok: 0, unverified: 1, degraded: 2, dead: 3 };
+        return (rank[b] || 0) > (rank[a] || 0) ? b : a;
     }
 
     function truncate(s, max) {
@@ -110,7 +123,8 @@
             this.layout = null;        // computeLayout() result
             this._hostsData = {};      // raw stats for tooltips
             this._nodeIndex = new Map(); // id -> node for O(1) lookup
-            this._sig = '';            // topology signature
+            this._sig = '';            // render/layout signature
+            this._topoSig = '';        // config-only signature for ingest gating
             this._selected = null;
             this._rps = new Map();     // node id → requests/sec
             this._prevTotals = new Map();
@@ -131,16 +145,76 @@
 
         render(config, stats) {
             if (!config || !this.container) return;
+            var sig = this._configSignature(config) + '\u0002' + this._activeKey(config, stats);
+            this._hostTotal = config.hosts ? Object.keys(config.hosts).length : 0;
+            this._hostsData = stats || {};
+
+            // A metrics tick with unchanged topology only needs new counters,
+            // not a new node/link array or layout.
+            if (this._root && this.data && sig === this._topoSig) {
+                this._refreshStats(stats || {});
+                return;
+            }
+
             this._ingest(config, stats);
             this._autoCollapseIfCrowded();
-            var sig = this._signature();
-            if (this._root && sig === this._sig) { this._updateStats(); return; }
-            this._sig = sig;
+            this._topoSig = sig;
             this._draw();
         }
 
         update(config, stats) {
             this.render(config, stats);
+        }
+
+        // Which hosts have traffic. Part of the topology signature because idle
+        // hosts are grouped; it changes only when a host first sees a request.
+        _activeKey(config, stats) {
+            if (!config || !config.hosts) return '';
+            return Object.keys(config.hosts).filter(function (h) {
+                return stats && stats[h] && stats[h].total_reqs > 0;
+            }).sort().join(',');
+        }
+
+        // Zoom to where the traffic is: the busiest visible nodes and their
+        // parents. A 27-host map fitted whole is unreadable; this is what an
+        // operator looks at first. Falls back to fit() when nothing has traffic.
+        focusBusiest() {
+            if (!this._svg || !this.layout || !this.data) return false;
+            var positions = this.layout.positions || {};
+            var self = this;
+            var parent = new Map();
+            this.data.links.forEach(function (l) {
+                var t = endpointId(l.target);
+                if (!parent.has(t)) parent.set(t, endpointId(l.source));
+            });
+            var busy = this.data.nodes.filter(function (n) {
+                return positions[n.id] && n.type !== 'root' && n.id !== IDLE_GROUP_ID && n.total > 0;
+            }).sort(function (a, b) { return (b.total || 0) - (a.total || 0); }).slice(0, FOCUS_TOP);
+            if (!busy.length) { this.fit(); return false; }
+            var ids = new Set();
+            busy.forEach(function (n) {
+                ids.add(n.id);
+                var p = parent.get(n.id);
+                if (p && p !== 'AGBERO' && positions[p]) ids.add(p);
+            });
+            var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            ids.forEach(function (id) {
+                var p = positions[id];
+                minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+                maxX = Math.max(maxX, p.x + p.w); maxY = Math.max(maxY, p.y + p.h);
+            });
+            var box = this._svg.getBoundingClientRect();
+            var w = box.width || this.container.clientWidth || 800;
+            var h = box.height || this.container.clientHeight || 600;
+            var pad = 48;
+            var bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+            var k = clamp(Math.min((w - pad * 2) / bw, (h - pad * 2) / bh), MIN_FIT, 1);
+            this._zoom = { k: k, x: (w - bw * k) / 2 - minX * k, y: (h - bh * k) / 2 - minY * k };
+            this._userZoom = true;
+            this._overflow = true;
+            this._applyTransform();
+            if (typeof self._onZoom === 'function') self._onZoom(k);
+            return true;
         }
 
         setOptions(patch) {
@@ -246,6 +320,128 @@
             this._computeRps(Date.now());
         }
 
+        // Config-only signature: counters are left out so a metrics tick does
+        // not re-run processData().
+        _configSignature(config) {
+            if (!config || !config.hosts) return '';
+            var parts = [this.options.mode, this.options.orientation, this.options.density];
+            var hosts = config.hosts;
+            Object.keys(hosts).sort().forEach(function(h) {
+                var hc = hosts[h] || {};
+                parts.push('h:' + h + '|' + ((hc.tls && hc.tls.mode) || ''));
+                (hc.relays || []).forEach(function (r) { parts.push('rl:' + h + '|' + (r.name || '')); });
+                (hc.agents || []).forEach(function (a) { parts.push('ag:' + h + '|' + (a.name || '') + '|' + (a.relay || '')); });
+                (hc.routes || []).forEach(function(r) {
+                    var servers = (r.backends && r.backends.servers) || [];
+                    parts.push('r:' + h + '|' + (r.path || '/') + '|' +
+                        servers.map(function(s) { return s.address || ''; }).join(','));
+                    var sl = r.serverless || {};
+                    (sl.replay || []).forEach(function(x) { parts.push('rp:' + x.name); });
+                    (sl.workers || []).forEach(function(x) { parts.push('wk:' + x.name); });
+                    (r.exposes || []).forEach(function(x) { parts.push('ex:' + x.id + '|' + x.via); });
+                });
+                (hc.proxies || []).forEach(function(p) {
+                    var servers = p.backends || [];
+                    parts.push('p:' + h + '|' + (p.name || p.listen || '') + '|' +
+                        (p.protocol || '') + '|' + (p.matcher || '') + '|' +
+                        servers.map(function(s) { return s.address || ''; }).join(','));
+                });
+            });
+            return parts.join('\u0001');
+        }
+
+        _backendStatus(bStat) {
+            if (!bStat) return 'unverified';
+            var hStat = (bStat.health && bStat.health.status) || 'Unknown';
+            if (bStat.alive === false || hStat === 'Dead' || hStat === 'Unhealthy') return 'dead';
+            if (hStat === 'Degraded') return 'degraded';
+            if (hStat === 'Healthy') return 'ok';
+            return bStat.alive ? 'unverified' : 'dead';
+        }
+
+        // Update counters and statuses in place, then repaint.
+        _refreshStats(stats) {
+            if (!this.data) return;
+            stats = stats || {};
+            this._hostsData = stats;
+            var self = this;
+            var nodeById = new Map();
+            this.data.nodes.forEach(function(n) { nodeById.set(n.id, n); });
+
+            var routeStats = function(node) {
+                var hs = (stats && stats[node.meta.hostname]) || {};
+                if (node.meta.routeType === 'proxy') return (hs.proxies || [])[node.meta.routeIdx] || {};
+                return (hs.routes || [])[node.meta.routeIdx] || {};
+            };
+
+            this.data.nodes.forEach(function(node) {
+                if (node.type === 'host') {
+                    var hs = (stats && stats[node.meta.hostname]) || {};
+                    node.total = hs.total_reqs;
+                    return;
+                }
+                if (node.type === 'route') {
+                    var rs = routeStats(node);
+                    node.total = rs.total_reqs;
+                    node.sessions = rs.active_sessions;
+                    return;
+                }
+                if (node.type === 'backend') {
+                    var rs = routeStats(node);
+                    var b = (rs.backends || [])[node.meta.backendIdx];
+                    if (!b) return;
+                    node.total = b.total_reqs;
+                    node.failures = b.failures;
+                    node.latency_us = b.latency_us;
+                    node.alive = b.alive;
+                    node.status = self._backendStatus(b);
+                    return;
+                }
+                if (node.type === 'serverless') {
+                    var rs = routeStats(node);
+                    var match = (rs.serverless || []).filter(function(s) {
+                        return s.name === node.meta.name && s.kind === node.kind;
+                    })[0];
+                    if (!match) return;
+                    node.total = match.total_reqs;
+                    node.failures = match.failures;
+                    node.status = match.failures > 0 ? 'degraded' : 'ok';
+                }
+            });
+
+            // Children first, then hosts. Edge status follows the target node
+            // in _updateStats(), so no separate edge rebuild is needed.
+            this.data.nodes.forEach(function(node) {
+                if (node.type !== 'route') return;
+                var status = 'ok';
+                (self._children.get(node.id) || []).forEach(function(cid) {
+                    var child = nodeById.get(cid);
+                    if (child) status = worstStatus(status, child.status);
+                });
+                node.status = status;
+            });
+            this.data.nodes.forEach(function(node) {
+                if (node.type !== 'host') return;
+                var status = 'ok';
+                (self._children.get(node.id) || []).forEach(function(cid) {
+                    var child = nodeById.get(cid);
+                    if (child) status = worstStatus(status, child.status);
+                });
+                node.status = status;
+            });
+            var group = nodeById.get(IDLE_GROUP_ID);
+            if (group) {
+                group.status = 'ok';
+                (self._children.get(IDLE_GROUP_ID) || []).forEach(function (cid) {
+                    var child = nodeById.get(cid);
+                    if (child) group.status = worstStatus(group.status, child.status);
+                });
+            }
+
+            this._computeRps(Date.now());
+            this._updateStats();
+        }
+
         // Child counts and the descendant map are rendering details, so they stay
         // out of processData(). The descendant count is what the topology view
         // shows on a collapsed host ("+12").
@@ -316,6 +512,7 @@
             if (this._autoCollapsed) return;
             if (this.options.mode !== 'topology') return;
             this._autoCollapsed = true;
+            if (this.data.nodes.some(function (n) { return n.id === IDLE_GROUP_ID; })) this._collapsed.add(IDLE_GROUP_ID);
             if (this.data.nodes.length <= AUTO_COLLAPSE_AT) return;
             var self = this;
             this.data.nodes.forEach(function (node) {
@@ -424,7 +621,12 @@
             // The viewport is only fitted automatically on the first paint or an
             // explicit relayout (orientation/density change); a topology change
             // from a config reload keeps the operator's zoom and pan.
-            if (refit || !this._fitted) { this.fit(); this._fitted = true; }
+            if (refit || !this._fitted) {
+                var first = !this._fitted;
+                this.fit();
+                this._fitted = true;
+                if (first && this._overflow && this.options.mode === 'topology') this.focusBusiest();
+            }
         }
 
         _ensureSvg() {
@@ -656,6 +858,7 @@
                 'data-id': node.id,
                 'data-label': node.label || '',
                 'data-protocol': node.protocol || '',
+                'data-kind': node.kind || '',
                 'tabindex': '0',
                 'role': 'button'
             });
@@ -709,6 +912,8 @@
                 'transform': 'translate(' + pos.x + ',' + pos.y + ')',
                 'data-id': node.id,
                 'data-label': node.label || '',
+                'data-protocol': node.protocol || '',
+                'data-kind': node.kind || '',
                 'tabindex': '0',
                 'role': 'button'
             });
@@ -796,6 +1001,7 @@
                 case 'root':
                     return 'Routing engine' + (this._hostTotal ? ' \u00B7 ' + this._hostTotal + ' hosts' : '');
                 case 'host':
+                    if (node.meta && node.meta.group === 'idle') return 'No traffic yet \u00B7 click to expand';
                     return (node.protocol === 'https' ? 'HTTPS \u00B7 TLS' : 'HTTP') +
                         (node.childCount ? ' \u00B7 ' + node.childCount + ' listeners' : '');
                 case 'route':
@@ -804,6 +1010,7 @@
                 case 'backend':
                     return (proto || 'HTTP') + ' upstream';
                 case 'serverless':
+                    if (node.kind === 'relay') return node.meta && node.meta.routeType === 'relay' ? 'Relay server' : 'Published via ' + ((node.meta && node.meta.agent) || 'relay');
                     return node.kind === 'replay' ? 'Replay proxy' : 'Worker process';
             }
             return '';
@@ -1104,6 +1311,7 @@
             var nodes = [];
             var links = [];
             var nodeSet = new Set();
+            var self = this;
 
             var addNode = function (id, label, type, status, meta, extra) {
                 if (nodeSet.has(id)) return;
@@ -1120,13 +1328,7 @@
             };
 
             var beStatus = function (backendStats, bIdx) {
-                if (!backendStats[bIdx]) return 'unverified';
-                var bStat = backendStats[bIdx];
-                var hStat = (bStat.health && bStat.health.status) || 'Unknown';
-                if (bStat.alive === false || hStat === 'Dead' || hStat === 'Unhealthy') return 'dead';
-                if (hStat === 'Degraded') return 'degraded';
-                if (hStat === 'Healthy') return 'ok';
-                return bStat.alive ? 'unverified' : 'dead';
+                return self._backendStatus(backendStats[bIdx]);
             };
 
             var statsOf = function (arr, idx) { return (arr && arr[idx]) ? arr[idx] : {}; };
@@ -1135,15 +1337,39 @@
             addNode(rootId, 'AGBERO', 'root');
 
             if (config.hosts) {
-                Object.keys(config.hosts).forEach(function (hostname) {
+                // Hosts with traffic first, alphabetical within each group, so
+                // the busy part of the map sits together at the top. Idle hosts
+                // fold into one expandable group node when there are many.
+                var names = Object.keys(config.hosts).sort();
+                var isActive = function (h) { return !!(stats && stats[h] && stats[h].total_reqs > 0); };
+                var active = names.filter(isActive);
+                var idle = names.filter(function (h) { return !isActive(h); });
+                var groupIdle = idle.length >= IDLE_GROUP_AT;
+                var linkGroup = groupIdle;
+                active.concat(idle).forEach(function (hostname) {
                     var hostCfg = config.hosts[hostname] || {};
                     var hostStats = (stats && stats[hostname]) ? stats[hostname] : {};
+                    var parentId = groupIdle && !isActive(hostname) ? IDLE_GROUP_ID : rootId;
+                    if (parentId === IDLE_GROUP_ID && linkGroup) {
+                        // Created here, after every active host, so it lays out below them.
+                        addNode(IDLE_GROUP_ID, 'Idle \u00b7 ' + idle.length + ' hosts', 'host', 'unverified', { group: 'idle' }, { total: 0 });
+                        addLink(rootId, IDLE_GROUP_ID, 0);
+                        linkGroup = false;
+                    }
 
-                    addNode(hostname, hostname, 'host', 'ok', { hostname: hostname }, {
+                    addNode(hostname, hostname, 'host', 'unverified', { hostname: hostname }, {
                         protocol: hostCfg.tls && hostCfg.tls.mode ? 'https' : 'http',
                         total: hostStats.total_reqs
                     });
-                    addLink(rootId, hostname, hostStats.total_reqs || 0);
+                    addLink(parentId, hostname, hostStats.total_reqs || 0);
+
+                    // Relay server on this host: agents dial in here.
+                    (hostCfg.relays || []).forEach(function (rl) {
+                        var rlId = hostname + '|relay|' + (rl.name || 'agents');
+                        addNode(rlId, '\u21c4 relay ' + (rl.name || 'agents') + (rl.listen && rl.listen.port ? ' :' + rl.listen.port : ''), 'serverless', 'ok',
+                            { hostname: hostname, routeType: 'relay' }, { protocol: 'relay', kind: 'relay' });
+                        addLink(hostname, rlId, 0);
+                    });
 
                     (hostCfg.routes || []).forEach(function (route, rIdx) {
                         var path = route.path || '/';
@@ -1151,9 +1377,9 @@
                         var routeStats = statsOf(hostStats.routes, rIdx);
                         var bkStats = routeStats.backends || [];
 
-                        addNode(routeId, path, 'route', 'ok',
+                        addNode(routeId, path, 'route', 'unverified',
                             { hostname: hostname, routeIdx: rIdx, routeType: 'route' },
-                            { protocol: 'http', total: routeStats.total_reqs });
+                            { protocol: route.protocol || ROUTE_PROTOCOLS.HTTP, total: routeStats.total_reqs });
                         addLink(hostname, routeId, routeStats.total_reqs || 0);
 
                         var servers = (route.backends && route.backends.servers) || [];
@@ -1165,9 +1391,21 @@
                             var bStat = bkStats[bIdx] || {};
                             addNode(beId, beUrl.replace(/^https?:\/\//, ''), 'backend', status,
                                 { hostname: hostname, routeIdx: rIdx, backendIdx: bIdx, routeType: 'route' },
-                                { protocol: 'http', total: bStat.total_reqs, failures: bStat.failures,
+                                { protocol: ROUTE_PROTOCOLS.HTTP, total: bStat.total_reqs, failures: bStat.failures,
                                   latency_us: bStat.latency_us, alive: bStat.alive });
                             addLink(routeId, beId, bStat.total_reqs || 0, status);
+                        });
+
+                        // Relay exposure: this route is published through an agent.
+                        (route.exposes || []).forEach(function (ex) {
+                            var agent = (hostCfg.agents || []).filter(function (a) { return a.name === ex.via; })[0];
+                            var relayHost = '';
+                            try { relayHost = agent && agent.relay ? new URL(agent.relay).hostname : ''; } catch (e) { relayHost = ''; }
+                            var exId = routeId + '|expose|' + ex.id;
+                            addNode(exId, '\u21c4 ' + (relayHost || ex.via) + '/' + ex.id, 'serverless', 'ok',
+                                { hostname: hostname, routeIdx: rIdx, routeType: 'route', name: ex.id, agent: ex.via, relay: relayHost },
+                                { protocol: 'relay', kind: 'relay' });
+                            addLink(routeId, exId, 0);
                         });
 
                         if (route.serverless && route.serverless.replay) {
@@ -1178,7 +1416,7 @@
                                 })[0];
                                 var status = slStats && slStats.failures > 0 ? 'degraded' : 'ok';
                                 addNode(slId, '\u21bb ' + rp.name, 'serverless', status,
-                                    { hostname: hostname, routeIdx: rIdx, routeType: 'route' },
+                                    { hostname: hostname, routeIdx: rIdx, routeType: 'route', name: rp.name },
                                     { protocol: 'replay', kind: 'replay', total: slStats && slStats.total_reqs,
                                       failures: slStats && slStats.failures });
                                 addLink(routeId, slId, (slStats && slStats.total_reqs) || 0, status);
@@ -1193,7 +1431,7 @@
                                 })[0];
                                 var status = wkStats && wkStats.failures > 0 ? 'degraded' : 'ok';
                                 addNode(wkId, '\u2699 ' + wk.name, 'serverless', status,
-                                    { hostname: hostname, routeIdx: rIdx, routeType: 'route' },
+                                    { hostname: hostname, routeIdx: rIdx, routeType: 'route', name: wk.name },
                                     { protocol: 'worker', kind: 'worker', total: wkStats && wkStats.total_reqs,
                                       failures: wkStats && wkStats.failures });
                                 addLink(routeId, wkId, (wkStats && wkStats.total_reqs) || 0, status);
@@ -1210,7 +1448,7 @@
                         var bkStats = proxyStats.backends || [];
                         var matcher = isUDP && proxy.matcher ? ':' + proxy.matcher : '';
 
-                        addNode(proxyId, proto + matcher + ':' + name, 'route', 'ok',
+                        addNode(proxyId, proto + matcher + ':' + name, 'route', 'unverified',
                             { hostname: hostname, routeIdx: pIdx, routeType: 'proxy' },
                             { protocol: isUDP ? 'udp' : 'tcp', total: proxyStats.total_reqs,
                               sessions: proxyStats.active_sessions });
@@ -1231,6 +1469,50 @@
                     });
                 });
             }
+
+            // Host and route health comes from the worst child, so it has to be
+            // computed once every backend status above is final.
+            var nodeById = new Map();
+            nodes.forEach(function(n) { nodeById.set(n.id, n); });
+            var children = new Map();
+            links.forEach(function(l) {
+                var sid = endpointId(l.source);
+                var tid = endpointId(l.target);
+                if (!children.has(sid)) children.set(sid, []);
+                children.get(sid).push(tid);
+            });
+            nodes.forEach(function(n) {
+                if (n.type !== 'route') return;
+                var status = 'ok';
+                (children.get(n.id) || []).forEach(function(cid) {
+                    var child = nodeById.get(cid);
+                    if (child) status = worstStatus(status, child.status);
+                });
+                n.status = status;
+            });
+            nodes.forEach(function(n) {
+                if (n.type !== 'host') return;
+                var status = 'ok';
+                (children.get(n.id) || []).forEach(function(cid) {
+                    var child = nodeById.get(cid);
+                    if (child) status = worstStatus(status, child.status);
+                });
+                n.status = status;
+            });
+            // The idle group is itself a 'host' node, so it was visited above
+            // before its member hosts were final; settle it last.
+            var group = nodeById.get(IDLE_GROUP_ID);
+            if (group) {
+                group.status = 'ok';
+                (children.get(IDLE_GROUP_ID) || []).forEach(function (cid) {
+                    var child = nodeById.get(cid);
+                    if (child) group.status = worstStatus(group.status, child.status);
+                });
+            }
+            links.forEach(function(l) {
+                var target = nodeById.get(endpointId(l.target));
+                if (target) l.status = worstStatus(l.status, target.status);
+            });
 
             return { nodes: nodes, links: links };
         }

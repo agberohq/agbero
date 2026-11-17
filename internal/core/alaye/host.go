@@ -24,6 +24,11 @@ type Host struct {
 	Routes  []Route `hcl:"route,block" json:"routes"`
 	Proxies []Proxy `hcl:"proxy,block" json:"proxies"`
 
+	// Relays configure the remote end of Agbero-to-Agbero reverse tunnels.
+	// Agents configure the local outbound end.
+	Relays []Relay `hcl:"relay,block" json:"relays,omitempty"`
+	Agents []Agent `hcl:"agent,block" json:"agents,omitempty"`
+
 	// source
 	SourceFile string `hcl:"-" json:"source_file,omitempty"`
 }
@@ -66,7 +71,9 @@ func (h *Host) Validate() error {
 		h.Bind[i] = port
 	}
 
-	if len(h.Routes) == 0 {
+	// A remote relay endpoint may exist only to accept agents; it does not need
+	// a local route. Every other host still needs at least one route.
+	if len(h.Routes) == 0 && len(h.Relays) == 0 {
 		return def.ErrNoRoutes
 	}
 	for i, route := range h.Routes {
@@ -77,6 +84,36 @@ func (h *Host) Validate() error {
 
 	if err := h.TLS.Validate(); err != nil {
 		return errors.Newf("tls: %w", err)
+	}
+
+	seenRelays := make(map[string]bool, len(h.Relays))
+	for i := range h.Relays {
+		if err := h.Relays[i].Validate(); err != nil {
+			return errors.Newf("relays[%d]: %w", i, err)
+		}
+		if seenRelays[h.Relays[i].Name] {
+			return errors.Newf("relays[%d]: duplicate name %q", i, h.Relays[i].Name)
+		}
+		seenRelays[h.Relays[i].Name] = true
+	}
+
+	seenAgents := make(map[string]bool, len(h.Agents))
+	for i := range h.Agents {
+		if err := h.Agents[i].Validate(); err != nil {
+			return errors.Newf("agents[%d]: %w", i, err)
+		}
+		if seenAgents[h.Agents[i].Name] {
+			return errors.Newf("agents[%d]: duplicate name %q", i, h.Agents[i].Name)
+		}
+		seenAgents[h.Agents[i].Name] = true
+	}
+	for i := range h.Routes {
+		for j := range h.Routes[i].Exposes {
+			ex := &h.Routes[i].Exposes[j]
+			if !seenAgents[ex.Via] {
+				return errors.Newf("route %q: expose %q references unknown agent %q", h.Routes[i].Path, ex.ID, ex.Via)
+			}
+		}
 	}
 	if err := h.Limits.Validate(); err != nil {
 		return errors.Newf("limits: %w", err)

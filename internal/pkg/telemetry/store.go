@@ -7,21 +7,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"go.etcd.io/bbolt"
 )
 
 const (
-	// retentionPeriod is how long we keep samples.
-	retentionPeriod = 24 * time.Hour
-
 	// CollectInterval is how often the collector takes a snapshot.
-	CollectInterval = 60 * time.Second
+	CollectInterval = def.TelemetryCollectInterval
 )
 
 var (
-	bucketMeta    = []byte("meta")
-	bucketSamples = []byte("samples") // sub-buckets keyed by host
+	bucketMeta           = []byte("meta")
+	bucketSamples        = []byte("samples")         // sub-buckets keyed by host
+	bucketBackendSamples = []byte("backend_samples") // host/route/backend/timestamp
 )
 
 // Store is a bbolt-backed time-series store for telemetry samples.
@@ -36,8 +35,10 @@ type Store struct {
 }
 
 type writeOp struct {
-	host   string
-	sample Sample
+	host    string
+	route   string
+	backend string
+	sample  Sample
 }
 
 // NewStore opens (or creates) the telemetry database at dataDir/telemetry.db.
@@ -53,6 +54,9 @@ func NewStore(dataDir expect.Folder) (*Store, error) {
 		if _, err := tx.CreateBucketIfNotExists(bucketSamples); err != nil {
 			return err
 		}
+		if _, err := tx.CreateBucketIfNotExists(bucketBackendSamples); err != nil {
+			return err
+		}
 		_, err := tx.CreateBucketIfNotExists(bucketMeta)
 		return err
 	}); err != nil {
@@ -62,7 +66,7 @@ func NewStore(dataDir expect.Folder) (*Store, error) {
 
 	s := &Store{
 		db:      db,
-		writeCh: make(chan writeOp, 256),
+		writeCh: make(chan writeOp, def.TelemetryWriteBuffer),
 		quit:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
@@ -77,6 +81,14 @@ func (s *Store) Record(host string, sample Sample) {
 	case s.writeCh <- writeOp{host: host, sample: sample}:
 	default:
 		// write buffer full — drop rather than block
+	}
+}
+
+// RecordBackend enqueues a backend-level sample for async persistence.
+func (s *Store) RecordBackend(host, route, backend string, sample Sample) {
+	select {
+	case s.writeCh <- writeOp{host: host, route: route, backend: backend, sample: sample}:
+	default:
 	}
 }
 
@@ -122,6 +134,48 @@ func (s *Store) Query(host string, qr QueryRange) ([]Sample, error) {
 	return out, err
 }
 
+// QueryBackend returns samples for one backend within the requested range.
+func (s *Store) QueryBackend(host, route, backend string, qr QueryRange) ([]Sample, error) {
+	cutoff := time.Now().Add(-qr.Duration).Unix()
+	var out []Sample
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		top := tx.Bucket(bucketBackendSamples)
+		if top == nil {
+			return nil
+		}
+		hb := top.Bucket([]byte(host))
+		if hb == nil {
+			return nil
+		}
+		rb := hb.Bucket([]byte(route))
+		if rb == nil {
+			return nil
+		}
+		bb := rb.Bucket([]byte(backend))
+		if bb == nil {
+			return nil
+		}
+		resSec := int64(qr.Resolution.Seconds())
+		var lastBucket int64
+		c := bb.Cursor()
+		for k, v := c.Seek(tsKey(cutoff)); k != nil; k, v = c.Next() {
+			ts := int64(binary.BigEndian.Uint64(k))
+			bucket := (ts / resSec) * resSec
+			if bucket == lastBucket {
+				continue
+			}
+			lastBucket = bucket
+			var sm Sample
+			if err := json.Unmarshal(v, &sm); err != nil {
+				continue
+			}
+			out = append(out, sm)
+		}
+		return nil
+	})
+	return out, err
+}
+
 // Hosts returns all host names that have recorded data.
 func (s *Store) Hosts() ([]string, error) {
 	var hosts []string
@@ -154,7 +208,7 @@ func (s *Store) Close() (err error) {
 // writeLoop drains writeCh, batching writes every 5 seconds for efficiency.
 func (s *Store) writeLoop() {
 	defer close(s.done)
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(def.TelemetryFlushInterval)
 	defer ticker.Stop()
 
 	var pending []writeOp
@@ -164,17 +218,34 @@ func (s *Store) writeLoop() {
 			return
 		}
 		_ = s.db.Update(func(tx *bbolt.Tx) error {
-			parent := tx.Bucket(bucketSamples)
+			hostParent := tx.Bucket(bucketSamples)
+			backendParent := tx.Bucket(bucketBackendSamples)
 			for _, op := range pending {
-				hb, err := parent.CreateBucketIfNotExists([]byte(op.host))
-				if err != nil {
-					continue
-				}
 				val, err := json.Marshal(op.sample)
 				if err != nil {
 					continue
 				}
-				_ = hb.Put(tsKey(op.sample.Timestamp), val)
+				if op.route == "" || op.backend == "" {
+					hb, err := hostParent.CreateBucketIfNotExists([]byte(op.host))
+					if err != nil {
+						continue
+					}
+					_ = hb.Put(tsKey(op.sample.Timestamp), val)
+					continue
+				}
+				hb, err := backendParent.CreateBucketIfNotExists([]byte(op.host))
+				if err != nil {
+					continue
+				}
+				rb, err := hb.CreateBucketIfNotExists([]byte(op.route))
+				if err != nil {
+					continue
+				}
+				bb, err := rb.CreateBucketIfNotExists([]byte(op.backend))
+				if err != nil {
+					continue
+				}
+				_ = bb.Put(tsKey(op.sample.Timestamp), val)
 			}
 			return nil
 		})
@@ -182,32 +253,73 @@ func (s *Store) writeLoop() {
 	}
 
 	pruneOld := func() {
-		cutoff := time.Now().Add(-retentionPeriod).Unix()
+		cutoff := time.Now().Add(-def.TelemetryRetention).Unix()
 		_ = s.db.Update(func(tx *bbolt.Tx) error {
-			parent := tx.Bucket(bucketSamples)
-			if parent == nil {
+			pruneHost := func(parent *bbolt.Bucket) error {
+				if parent == nil {
+					return nil
+				}
+				return parent.ForEach(func(k, v []byte) error {
+					if v != nil {
+						return nil
+					}
+					hb := parent.Bucket(k)
+					if hb == nil {
+						return nil
+					}
+					c := hb.Cursor()
+					for ck, _ := c.First(); ck != nil; ck, _ = c.Next() {
+						ts := int64(binary.BigEndian.Uint64(ck))
+						if ts >= cutoff {
+							break
+						}
+						_ = c.Delete()
+					}
+					return nil
+				})
+			}
+			if err := pruneHost(tx.Bucket(bucketSamples)); err != nil {
+				return err
+			}
+			top := tx.Bucket(bucketBackendSamples)
+			if top == nil {
 				return nil
 			}
-			return parent.ForEach(func(k, v []byte) error {
-				if v != nil {
-					return nil // not a sub-bucket
+			return top.ForEach(func(hk, hv []byte) error {
+				if hv != nil {
+					return nil
 				}
-				hb := parent.Bucket(k)
+				hb := top.Bucket(hk)
 				if hb == nil {
 					return nil
 				}
-				c := hb.Cursor()
-				for ck, _ := c.First(); ck != nil; ck, _ = c.Next() {
-					ts := int64(binary.BigEndian.Uint64(ck))
-					if ts >= cutoff {
-						break
+				return hb.ForEach(func(rk, rv []byte) error {
+					if rv != nil {
+						return nil
 					}
-					// bbolt require Cursor.Delete() during cursor iteration.
-					// Bucket.Delete() invalidates the cursor's internal state
-					// and can skip entries, loop infinitely, or panic.
-					_ = c.Delete()
-				}
-				return nil
+					rb := hb.Bucket(rk)
+					if rb == nil {
+						return nil
+					}
+					return rb.ForEach(func(bk, bv []byte) error {
+						if bv != nil {
+							return nil
+						}
+						bb := rb.Bucket(bk)
+						if bb == nil {
+							return nil
+						}
+						c := bb.Cursor()
+						for ck, _ := c.First(); ck != nil; ck, _ = c.Next() {
+							ts := int64(binary.BigEndian.Uint64(ck))
+							if ts >= cutoff {
+								break
+							}
+							_ = c.Delete()
+						}
+						return nil
+					})
+				})
 			})
 		})
 	}
@@ -218,7 +330,7 @@ func (s *Store) writeLoop() {
 		select {
 		case op := <-s.writeCh:
 			pending = append(pending, op)
-			if len(pending) >= 100 {
+			if len(pending) >= def.TelemetryBatchSize {
 				flush()
 			}
 		case <-ticker.C:

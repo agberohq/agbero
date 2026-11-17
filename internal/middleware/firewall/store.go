@@ -60,7 +60,7 @@ func NewStore(dataDir expect.Folder, logger *ll.Logger) (*Store, error) {
 	if err := dataDir.Ensure("", true); err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(dataDir.Path(), "firewall.db")
+	dbPath := filepath.Join(dataDir.Path(), def.DefaultFirewallDBName)
 	db, err := bbolt.Open(dbPath, 0600, &bbolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open firewall db: %w", err)

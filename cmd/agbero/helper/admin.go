@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -11,65 +12,104 @@ import (
 )
 
 type Admin struct {
-	p *Helper
+	p   *Helper
+	ctl *secrets.ControlClient
 }
 
-// requireStore returns the injected store or fatals with a clear message.
-func (a *Admin) requireStore() *keeperlib.Keeper {
-	if a.p.Store == nil {
-		a.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
+// WithControl routes Keeper reads and writes through a running service's
+// control socket. The service holds the Keeper database open, so opening it
+// again from the CLI would block until it times out.
+func (a *Admin) WithControl(c *secrets.ControlClient) *Admin {
+	a.ctl = c
+	return a
+}
+
+// adminKV is the part of Keeper the admin commands need.
+type adminKV interface {
+	Get(key string) ([]byte, error)
+	Set(key string, value []byte) error
+}
+
+type controlKV struct{ c *secrets.ControlClient }
+
+func (k controlKV) Get(key string) ([]byte, error) {
+	v, err := k.c.Get(key)
+	if err != nil {
+		return nil, err
 	}
-	return a.p.Store
+	if v == "" {
+		return nil, os.ErrNotExist
+	}
+	return []byte(v), nil
+}
+
+func (k controlKV) Set(key string, value []byte) error { return k.c.Set(key, string(value)) }
+
+type keeperKV struct{ k *keeperlib.Keeper }
+
+func (k keeperKV) Get(key string) ([]byte, error)     { return k.k.Get(key) }
+func (k keeperKV) Set(key string, value []byte) error { return k.k.Set(key, value) }
+
+// requireStore returns the running service's Keeper when one is reachable,
+// otherwise the store opened by this process, or fatals with a clear message.
+func (a *Admin) requireStore() adminKV {
+	if a.ctl != nil {
+		return controlKV{a.ctl}
+	}
+	if a.p.Store == nil {
+		a.p.UI().Abort("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
+	}
+	return keeperKV{a.p.Store}
 }
 
 func (a *Admin) TOTPSetup(_ string, username string) {
 	if username == "" {
-		a.p.Logger.Fatal("--user is required")
+		a.p.UI().Abort("--user is required")
 	}
 	store := a.requireStore()
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
 	secret, err := gen.GenerateSecret()
 	if err != nil {
-		a.p.Logger.Fatal("failed to generate TOTP secret: ", err)
+		a.p.UI().Abort("failed to generate TOTP secret: ", err)
 	}
 
 	storeKey := expect.Vault().AdminTOTP(username)
 	if err := store.Set(storeKey, []byte(secret)); err != nil {
-		a.p.Logger.Fatal("failed to store TOTP secret: ", err)
+		a.p.UI().Abort("failed to store TOTP secret: ", err)
 	}
 
 	uri := gen.GetProvisioningURI(secret, username)
-	a.renderTOTPQR(username, storeKey, uri)
+	a.renderTOTPQR(username, storeKey, uri, secret)
 }
 
 func (a *Admin) TOTPQR(_ string, username string) {
 	if username == "" {
-		a.p.Logger.Fatal("--user is required")
+		a.p.UI().Abort("--user is required")
 	}
 	store := a.requireStore()
 
 	storeKey := expect.Vault().AdminTOTP(username)
 	secretBytes, err := store.Get(storeKey)
 	if err != nil {
-		a.p.Logger.Fatal("TOTP secret not found — run 'agbero admin totp setup' first: ", err)
+		a.p.UI().Abort("TOTP secret not found — run 'agbero admin totp setup' first: ", err)
 	}
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
 	uri := gen.GetProvisioningURI(string(secretBytes), username)
-	a.renderTOTPQR(username, storeKey, uri)
+	a.renderTOTPQR(username, storeKey, uri, string(secretBytes))
 }
 
 func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
 	if username == "" {
-		a.p.Logger.Fatal("--user is required")
+		a.p.UI().Abort("--user is required")
 	}
 	store := a.requireStore()
 
 	storeKey := expect.Vault().AdminTOTP(username)
 	secretBytes, err := store.Get(storeKey)
 	if err != nil {
-		a.p.Logger.Fatal("TOTP secret not found — run 'agbero admin totp setup' first: ", err)
+		a.p.UI().Abort("TOTP secret not found — run 'agbero admin totp setup' first: ", err)
 	}
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
@@ -77,11 +117,11 @@ func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
 
 	qr, qrErr := setup.TOTPProvisioningQR(uri)
 	if qrErr != nil {
-		a.p.Logger.Fatal("QR generation failed: ", qrErr)
+		a.p.UI().Abort("QR generation failed: ", qrErr)
 	}
 
 	if err := os.WriteFile(outFile, qr.PNG, 0600); err != nil {
-		a.p.Logger.Fatal("failed to write QR PNG: ", err)
+		a.p.UI().Abort("failed to write QR PNG: ", err)
 	}
 
 	u := ui.New()
@@ -90,12 +130,16 @@ func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
 	})
 }
 
-func (a *Admin) renderTOTPQR(username, storeKey, uri string) {
+func (a *Admin) renderTOTPQR(username, storeKey, uri, secret string) {
 	u := ui.New()
 	u.Render(func() {
 		u.SectionHeader("TOTP — " + username)
 		u.KeyValue("Store key", storeKey)
 		u.QR(uri)
+		u.Blank()
+		u.InfoLine("TOTP secret: " + secret)
+		u.InfoLine("Provisioning URI: " + uri)
+		u.WarnLine("The secret is shown once. If the QR cannot be scanned, enter the secret manually.")
 		u.Blank()
 		u.InfoLine("Add to agbero.hcl admin block:")
 		u.InfoLine(`  totp {`)

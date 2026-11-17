@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 
@@ -132,7 +133,10 @@ func mergeRedactedSecrets(existing, incoming *alaye.Host) {
 		if len(in.BasicAuth.Users) == 0 && len(ex.BasicAuth.Users) > 0 {
 			in.BasicAuth.Users = append([]string(nil), ex.BasicAuth.Users...)
 		}
-		if in.JWTAuth.Secret == def.RedactedValue {
+		if len(in.Protect.Users) == 0 && len(ex.Protect.Users) > 0 {
+			in.Protect.Users = append([]string(nil), ex.Protect.Users...)
+		}
+		if isRedactedExpectValue(in.JWTAuth.Secret) {
 			in.JWTAuth.Secret = ex.JWTAuth.Secret
 		}
 		if in.OAuth.ClientSecret == def.RedactedValue {
@@ -144,10 +148,10 @@ func mergeRedactedSecrets(existing, incoming *alaye.Host) {
 		if in.ForwardAuth.URL == def.RedactedValue {
 			in.ForwardAuth.URL = ex.ForwardAuth.URL
 		}
-		if in.ForwardAuth.TLS.ClientCert == def.RedactedValue {
+		if isRedactedExpectValue(in.ForwardAuth.TLS.ClientCert) {
 			in.ForwardAuth.TLS.ClientCert = ex.ForwardAuth.TLS.ClientCert
 		}
-		if in.ForwardAuth.TLS.ClientKey == def.RedactedValue {
+		if isRedactedExpectValue(in.ForwardAuth.TLS.ClientKey) {
 			in.ForwardAuth.TLS.ClientKey = ex.ForwardAuth.TLS.ClientKey
 		}
 		if isRedactedMap(in.Wasm.Config) {
@@ -157,7 +161,42 @@ func mergeRedactedSecrets(existing, incoming *alaye.Host) {
 			in.Backends.Tunnel = ex.Backends.Tunnel
 		}
 		mergeGitSecrets(&in.Web.Git, &ex.Web.Git)
+		for mi := range in.Web.Mounts {
+			inMount := &in.Web.Mounts[mi]
+			for ei := range ex.Web.Mounts {
+				if mountPathsEqual(inMount.Path, ex.Web.Mounts[ei].Path) {
+					mergeGitSecrets(&inMount.Git, &ex.Web.Mounts[ei].Git)
+					break
+				}
+			}
+		}
 		mergeGitSecrets(&in.Serverless.Git, &ex.Serverless.Git)
+	}
+
+	for ri := range incoming.Relays {
+		for rj := range existing.Relays {
+			if existing.Relays[rj].Name != incoming.Relays[ri].Name {
+				continue
+			}
+			if isRedactedExpectValue(incoming.Relays[ri].Auth.Token) {
+				incoming.Relays[ri].Auth.Token = existing.Relays[rj].Auth.Token
+			}
+			break
+		}
+	}
+	for ai := range incoming.Agents {
+		for aj := range existing.Agents {
+			if existing.Agents[aj].Name != incoming.Agents[ai].Name {
+				continue
+			}
+			if isRedactedExpectValue(incoming.Agents[ai].Token) {
+				incoming.Agents[ai].Token = existing.Agents[aj].Token
+			}
+			if isRedactedExpectValue(incoming.Agents[ai].Enroll) {
+				incoming.Agents[ai].Enroll = existing.Agents[aj].Enroll
+			}
+			break
+		}
 	}
 }
 
@@ -194,20 +233,31 @@ func cloneStringMap(m map[string]string) map[string]string {
 	return out
 }
 
+func mountPathsEqual(a, b string) bool {
+	return path.Clean(strings.TrimSpace(a)) == path.Clean(strings.TrimSpace(b))
+}
+
+// isRedactedExpectValue recognises both markers a secret-bearing expect.Value
+// can carry on a read: explicit def.RedactedValue and the marshaller's own
+// "[REDACTED]" replacement for non-secret-store values.
+func isRedactedExpectValue(v expect.Value) bool {
+	return v == def.RedactedValue || v == expect.Value("[REDACTED]")
+}
+
 func mergeGitSecrets(in, ex *alaye.Git) {
 	if in == nil || ex == nil {
 		return
 	}
-	if in.Secret == def.RedactedValue {
+	if isRedactedExpectValue(in.Secret) {
 		in.Secret = ex.Secret
 	}
-	if in.Auth.Password == def.RedactedValue {
+	if isRedactedExpectValue(in.Auth.Password) {
 		in.Auth.Password = ex.Auth.Password
 	}
-	if in.Auth.SSHKey == def.RedactedValue {
+	if isRedactedExpectValue(in.Auth.SSHKey) {
 		in.Auth.SSHKey = ex.Auth.SSHKey
 	}
-	if in.Auth.SSHKeyPassphrase == def.RedactedValue {
+	if isRedactedExpectValue(in.Auth.SSHKeyPassphrase) {
 		in.Auth.SSHKeyPassphrase = ex.Auth.SSHKeyPassphrase
 	}
 }
@@ -290,7 +340,7 @@ func (r hostUpdateRequest) Validate() error {
 // list handles GET requests to retrieve all registered host configurations as JSON.
 // It loads discovery from discovery and sanitizes sensitive fields before response.
 func (h *Host) list(w http.ResponseWriter, r *http.Request) {
-	hosts, _ := h.discovery.LoadAll()
+	hosts, _ := h.discovery.LoadCanonicalByDomain()
 	format := detectFormat(r)
 
 	if format == "hcl" {
@@ -413,6 +463,7 @@ func (h *Host) create(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+		defer tmpFile.Close()
 		defer os.Remove(tmpFile.Name())
 
 		if _, err := tmpFile.Write(rawHCL); err != nil {
@@ -437,15 +488,18 @@ func (h *Host) create(w http.ResponseWriter, r *http.Request) {
 
 	if req.Config != nil {
 		req.Config.Domains = []string{domain}
-		woos.DefaultHost(req.Config)
 	}
 
 	// Preserve credentials the read API hid (see mergeRedactedSecrets) before
-	// validation — an emptied basic_auth.users would otherwise fail Validate.
+	// defaults and validation: a redacted expect.Value would otherwise look like
+	// a configured secret and auto-enable an auth block.
 	if isJSON && req.Config != nil {
 		if existing := h.discovery.Get(domain); existing != nil {
 			mergeRedactedSecrets(existing, req.Config)
 		}
+	}
+	if req.Config != nil {
+		woos.DefaultHost(req.Config)
 	}
 
 	if err := req.Validate(); err != nil {
@@ -541,9 +595,10 @@ func (h *Host) update(w http.ResponseWriter, r *http.Request) {
 
 		if req.Config != nil {
 			req.Config.Domains = []string{domain}
-			woos.DefaultHost(req.Config)
-			// Keep credentials the read API replaced with *** (GET -> edit -> PUT).
+			// Keep credentials the read API replaced with *** (GET -> edit -> PUT)
+			// before defaults see the redacted placeholders.
 			mergeRedactedSecrets(existingCfg, req.Config)
+			woos.DefaultHost(req.Config)
 		}
 
 		if err := req.Validate(); err != nil {
@@ -571,6 +626,7 @@ func (h *Host) update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+		defer tmpFile.Close()
 		defer os.Remove(tmpFile.Name())
 
 		if _, err := tmpFile.Write(rawHCL); err != nil {

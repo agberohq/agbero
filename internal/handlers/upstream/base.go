@@ -57,11 +57,11 @@ type Base struct {
 	StartTime time.Time
 	// LastRecov is the nanosecond timestamp when the circuit first tripped or
 	// last recovered. Written ONLY on first trip and on recovery.
-	LastRecov atomic.Int64
+	LastRecov *atomic.Int64
 	// tripped is true while the circuit is open. Used by RecordResult(false)
 	// to distinguish "just tripped" from "already open" without relying on
 	// the Failures counter value (which direct tests manipulate freely).
-	tripped atomic.Bool
+	tripped *atomic.Bool
 
 	breaker *jack.Breaker
 	sem     *jack.Semaphore
@@ -107,6 +107,8 @@ func NewBase(c Config) (Base, error) {
 	}
 
 	b := Base{
+		LastRecov:   new(atomic.Int64),
+		tripped:     new(atomic.Bool),
 		Address:     c.Address,
 		WeightVal:   weight,
 		MaxConns:    c.MaxConnections,

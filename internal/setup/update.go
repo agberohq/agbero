@@ -31,6 +31,7 @@ import (
 // confirmation prompt. SHA-256 verification is never skipped regardless of flags.
 func (s *System) Update(force, autoYes bool) error {
 	u := ui.New()
+	defer u.Flush()
 	u.SectionHeader("System Update")
 
 	release, err := s.fetchLatestRelease()
@@ -39,6 +40,10 @@ func (s *System) Update(force, autoYes bool) error {
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	u.KeyValueBlock("", []ui.KV{
+		{Label: "Current", Value: woos.Version},
+		{Label: "Latest", Value: release.TagName},
+	})
 
 	if !force && !version.ShouldUpdate(woos.Version, latestVersion) {
 		u.SuccessLine(fmt.Sprintf("already up to date (%s)", woos.Version))
@@ -69,8 +74,6 @@ func (s *System) Update(force, autoYes bool) error {
 	}
 
 	u.KeyValueBlock("", []ui.KV{
-		{Label: "Current", Value: woos.Version},
-		{Label: "Latest", Value: release.TagName},
 		{Label: "Asset", Value: assetName},
 		{Label: "Size", Value: fmt.Sprintf("%d bytes", binaryAsset.Size)},
 	})

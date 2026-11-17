@@ -13,8 +13,9 @@ import (
 )
 
 type Route struct {
-	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	Path    string        `hcl:"path,label" json:"path"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Path     string        `hcl:"path,label" json:"path"`
+	Protocol string        `hcl:"protocol,attr,omitempty" json:"protocol,omitempty"`
 
 	Env map[string]expect.Value `hcl:"env,attr" json:"env,omitempty"`
 
@@ -25,12 +26,14 @@ type Route struct {
 	Web        Web        `hcl:"web,block,omitempty" json:"web,omitempty"`
 	Backends   Backend    `hcl:"backend,block,omitempty" json:"backends,omitempty"`
 	Serverless Serverless `hcl:"serverless,block,omitempty" json:"serverless,omitempty"`
+	Exposes    []Expose   `hcl:"expose,block" json:"exposes,omitempty"`
 
 	HealthCheck    HealthCheck    `hcl:"health_check,block,omitempty" json:"health_check,omitempty"`
 	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block,omitempty" json:"circuit_breaker,omitempty"`
 	Timeouts       TimeoutRoute   `hcl:"timeouts,block,omitempty" json:"timeouts,omitempty"`
 
 	BasicAuth   BasicAuth   `hcl:"basic_auth,block,omitempty" json:"basic_auth,omitempty"`
+	Protect     Protect     `hcl:"protect,block,omitempty" json:"protect,omitempty"`
 	ForwardAuth ForwardAuth `hcl:"forward_auth,block,omitempty" json:"forward_auth,omitempty"`
 	JWTAuth     JWTAuth     `hcl:"jwt_auth,block,omitempty" json:"jwt_auth,omitempty"`
 	OAuth       OAuth       `hcl:"o_auth,block,omitempty" json:"oauth,omitempty"`
@@ -59,9 +62,21 @@ func (r *Route) Validate() error {
 	if !strings.HasPrefix(r.Path, def.Slash) {
 		return errors.Newf("%w: path %q must start with '/'", def.ErrRouteInvalidPrefix, r.Path)
 	}
+	switch strings.ToLower(strings.TrimSpace(r.Protocol)) {
+	case "", def.RouteProtocolHTTP, def.RouteProtocolMCP:
+	default:
+		return errors.Newf("route %q: protocol must be http or mcp", r.Path)
+	}
 
-	isWeb := r.Web.Root.IsSet() || (r.Web.Git.Enabled.Active() && !r.Serverless.Enabled.Active())
-	isBackend := len(r.Backends.Servers) > 0
+	for i := range r.Exposes {
+		if err := r.Exposes[i].Validate(); err != nil {
+			return errors.Newf("route %q: %w", r.Path, err)
+		}
+	}
+
+	isWeb := r.Web.Root.IsSet() || len(r.Web.Mounts) > 0 ||
+		(r.Web.Git.Enabled.Active() && !r.Serverless.Enabled.Active())
+	isBackend := len(r.Backends.Servers) > 0 || r.Backends.HasTunnel()
 	isServerless := r.Serverless.Enabled.Active()
 
 	engines := 0
@@ -117,6 +132,9 @@ func (r *Route) Validate() error {
 	}
 
 	if isServerless {
+		if err := r.validateAuth(); err != nil {
+			return err
+		}
 		return r.Serverless.Validate()
 	}
 
@@ -128,7 +146,26 @@ func (r *Route) Validate() error {
 }
 
 func (r *Route) validateAuth() error {
+	// protect owns the browser session and login endpoints, so it cannot
+	// be layered with another primary auth mode. Existing combinations such as
+	// basic_auth + forward_auth remain supported.
+	if r.Protect.Enabled.Active() &&
+		(r.BasicAuth.Enabled.Active() ||
+			r.ForwardAuth.Enabled.Active() ||
+			r.JWTAuth.Enabled.Active() ||
+			r.OAuth.Enabled.Active()) {
+		return errors.New("route: protect cannot be combined with basic_auth, forward_auth, jwt_auth, or o_auth")
+	}
+	if r.Protect.Enabled.Active() && strings.Contains(r.Path, "*") {
+		return errors.New("protect requires a concrete route path (wildcards are not supported)")
+	}
 	if err := r.BasicAuth.Validate(); err != nil {
+		return errors.Newf("basic_auth: %w", err)
+	}
+	if err := r.Protect.Validate(); err != nil {
+		return errors.Newf("protect: %w", err)
+	}
+	if err := r.ForwardAuth.Validate(); err != nil {
 		return errors.Newf("basic_auth: %w", err)
 	}
 	if err := r.ForwardAuth.Validate(); err != nil {
@@ -157,7 +194,7 @@ func (r *Route) validatePlugins() error {
 }
 
 func (r *Route) validateWebRoute() error {
-	if !r.Web.Root.IsSet() && !r.Web.Git.Enabled.Active() {
+	if !r.Web.Root.IsSet() && !r.Web.Git.Enabled.Active() && len(r.Web.Mounts) == 0 {
 		return def.ErrWebRouteRootRequired
 	}
 	if err := r.Web.Validate(); err != nil {
@@ -184,7 +221,9 @@ func (r *Route) validateWebRoute() error {
 }
 
 func (r *Route) validateProxyRoute() error {
-	if len(r.Backends.Servers) == 0 {
+	// A tunnelled backend is a valid upstream with no explicit server list:
+	// the tunnel itself is the connection target.
+	if len(r.Backends.Servers) == 0 && !r.Backends.HasTunnel() {
 		return def.ErrProxyRouteNoBackends
 	}
 	for i, b := range r.Backends.Servers {
@@ -195,11 +234,13 @@ func (r *Route) validateProxyRoute() error {
 	// Tunnel validation: via and tunnel are mutually exclusive.
 	// via name resolution happens at startup in server.go — unknown names
 	// are a fatal startup error, not a config-parse error.
-	if r.Backends.Via != "" && r.Backends.Tunnel != "" {
+	via := strings.TrimSpace(r.Backends.Via)
+	tunnel := strings.TrimSpace(r.Backends.Tunnel)
+	if via != "" && tunnel != "" {
 		return errors.New("backend: \"via\" and \"tunnel\" are mutually exclusive — use one or the other")
 	}
-	if r.Backends.Tunnel != "" {
-		if err := validateInlineTunnel(r.Backends.Tunnel); err != nil {
+	if tunnel != "" {
+		if err := validateInlineTunnel(tunnel); err != nil {
 			return errors.Newf("backend.tunnel: %w", err)
 		}
 	}
@@ -280,6 +321,16 @@ func (r *Route) Key() string {
 		}
 	}
 
+	if r.Protect.Enabled.Active() {
+		w.WriteString("protect")
+		w.WriteString(r.Protect.Title)
+		w.WriteString(r.Protect.CookieName)
+		w.WriteString(r.Protect.SessionTTL.String())
+		for _, u := range r.Protect.Users {
+			w.WriteString(u)
+		}
+	}
+
 	if r.ForwardAuth.Enabled.Active() {
 		w.WriteString(r.ForwardAuth.URL)
 	}
@@ -293,7 +344,7 @@ func (r *Route) Key() string {
 		w.WriteString(r.OAuth.ClientID)
 	}
 
-	if r.Web.Root.IsSet() || r.Web.Git.Enabled.Active() || r.Web.Enabled.Active() {
+	if r.Web.Root.IsSet() || r.Web.Git.Enabled.Active() || len(r.Web.Mounts) > 0 || r.Web.Enabled.Active() {
 		w.WriteString(r.Web.Root.String())
 
 		for _, idx := range r.Web.Index {
@@ -320,13 +371,29 @@ func (r *Route) Key() string {
 		}
 
 		if r.Web.Git.Enabled.Active() {
-			w.WriteString("git")
-			w.WriteString(r.Web.Git.ID)
-			w.WriteString(r.Web.Git.URL)
-			w.WriteString(r.Web.Git.Branch)
-			w.WriteString(r.Web.Git.WorkDir.String())
-			w.WriteString(r.Web.Git.SubDir)
-			w.WriteString(r.Web.Git.Interval.String())
+			writeWebGitKey(w, &r.Web.Git)
+		}
+		for _, mount := range r.Web.Mounts {
+			w.WriteString("mount")
+			w.WriteString(mount.Path)
+			w.WriteString(mount.Root.String())
+			if mount.Git.Enabled.Active() {
+				writeWebGitKey(w, &mount.Git)
+			}
+		}
+		for _, ex := range r.Exposes {
+			w.WriteString("expose")
+			w.WriteString(ex.ID)
+			w.WriteString(ex.Via)
+			w.WriteString(fmt.Sprint(ex.Path, ex.Subdomain))
+			w.WriteString(ex.LocalPath)
+			w.WriteString(ex.LocalHost)
+			if ex.TCP != nil {
+				w.WriteString(fmt.Sprint("tcp", ex.TCP.PublicPort, ex.TCP.Local))
+			}
+			if ex.UDP != nil {
+				w.WriteString(fmt.Sprint("udp", ex.UDP.PublicPort, ex.UDP.Local))
+			}
 		}
 
 		if r.Web.Markdown.Enabled.Active() {
@@ -464,8 +531,19 @@ func (r *Route) Key() string {
 	return fmt.Sprintf("%x", w.Sum64())
 }
 
+func writeWebGitKey(w interface{ WriteString(string) (int, error) }, g *Git) {
+	w.WriteString("git")
+	w.WriteString(g.ID)
+	w.WriteString(g.URL)
+	w.WriteString(g.Branch)
+	w.WriteString(g.WorkDir.String())
+	w.WriteString(g.SubDir)
+	w.WriteString(g.Interval.String())
+	w.WriteString(g.EffectiveMode())
+}
+
 func (r *Route) KeyBackend(domain, backendAddr string) Key {
-	return r.backendKey("http", domain, backendAddr)
+	return r.backendKey(def.RouteProtocolHTTP, domain, backendAddr)
 }
 
 func (r *Route) KeyReplay(domain, replayName string) Key {

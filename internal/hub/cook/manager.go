@@ -91,6 +91,7 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 			existing.Config.WorkDir == cfg.WorkDir &&
 			existing.Config.Interval == cfg.Interval &&
 			existing.Config.Secret == cfg.Secret &&
+			existing.Config.Mode == cfg.Mode &&
 			existing.Config.Auth.Type == cfg.Auth.Type &&
 			existing.Config.Auth.Username == cfg.Auth.Username
 		if unchanged {
@@ -131,7 +132,7 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	m.entries.Set(routeKey, &Entry{Cook: c, Config: cfg, ctx: ctx, cancel: cancel})
 	m.logger.Fields(
 		"route_key", routeKey,
-		"mode", cfg.Mode,
+		"mode", cfg.EffectiveMode(),
 		"webhook", "/.well-known/agbero/webhook/git/"+routeKey,
 	).Info("git integration configured")
 
@@ -276,7 +277,7 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	if entry.Config.Mode == def.GitModePull {
+	if entry.Config.EffectiveMode() == def.GitModePull {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}

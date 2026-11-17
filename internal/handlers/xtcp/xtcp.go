@@ -38,5 +38,8 @@ type Snapshot struct {
 	Failures    int64
 	MaxConns    int64
 	TotalReqs   uint64
+	BytesIn     uint64
+	BytesOut    uint64
+	Datagrams   uint64
 	Latency     metrics.LatencySnapshot
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/core/woos"
 )
 
 // writeTemp writes content to a temp file and returns its path.
@@ -925,5 +926,334 @@ func TestMarshal_RoundTripsMaps(t *testing.T) {
 	}
 	if got := time.Duration(r.Cache.TTLPolicy.ContentType["text/html"]); got != time.Hour {
 		t.Errorf("ttl policy content_type lost in round-trip (got %v)", got)
+	}
+}
+
+func TestParseHostConfig_Protect(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["admin.example.com"]
+
+route "/admin" {
+  protect {
+    enabled     = "on"
+    title       = "Cockroach Admin"
+    users       = ["alice:$2y$10$abcdefghijklmnopqrstuv"]
+    session_ttl = "2h"
+  }
+
+  backend {
+    server { address = "http://127.0.0.1:8080" }
+  }
+}
+`)
+	cfg, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	auth := cfg.Routes[0].Protect
+	if !auth.Enabled.Active() || auth.Title != "Cockroach Admin" || len(auth.Users) != 1 {
+		t.Fatalf("protect not decoded: %+v", auth)
+	}
+	if auth.SessionTTL.StdDuration() != 2*time.Hour {
+		t.Fatalf("session_ttl = %s", auth.SessionTTL.StdDuration())
+	}
+}
+
+func TestParseHostConfig_GitMode(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["docs.example.com"]
+
+route "/" {
+  web {
+    git {
+      enabled = "on"
+      id      = "docs"
+      url     = "https://github.com/example/docs.git"
+      branch  = "main"
+      secret  = "webhook-secret"
+      mode    = "push"
+    }
+  }
+}
+`)
+	cfg, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	git := cfg.Routes[0].Web.Git
+	if git.Mode != def.GitModePush {
+		t.Fatalf("mode = %q, want %q", git.Mode, def.GitModePush)
+	}
+	if git.EffectiveMode() != def.GitModePush || !git.IsPush() || git.IsPull() {
+		t.Fatalf("unexpected resolved git mode: mode=%q effective=%q pull=%v push=%v",
+			git.Mode, git.EffectiveMode(), git.IsPull(), git.IsPush())
+	}
+
+	raw, err := MarshalBytes(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `mode    = "push"`) && !strings.Contains(string(raw), `mode = "push"`) {
+		t.Fatalf("round-trip dropped the git mode:\n%s", raw)
+	}
+}
+
+func TestParseHostConfig_WebMounts(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["wo.example.com"]
+
+route "/" {
+  web {
+    mount "/site1" {
+      root = "/var/www/wo/site1"
+    }
+
+    mount "/site2" {
+      git {
+        enabled  = "on"
+        mode     = "pull"
+        id       = "wo-site2"
+        url      = "https://github.com/example/site2.git"
+        interval = "5m"
+      }
+    }
+  }
+}
+`)
+	cfg, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	woos.DefaultHost(cfg)
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Routes) != 1 {
+		t.Fatalf("routes = %d, want 1", len(cfg.Routes))
+	}
+	mounts := cfg.Routes[0].Web.Mounts
+	if len(mounts) != 2 {
+		t.Fatalf("mounts = %d, want 2", len(mounts))
+	}
+	if mounts[0].Path != "/site1" || mounts[0].Root != "/var/www/wo/site1" {
+		t.Fatalf("site1 mount = %+v", mounts[0])
+	}
+	if !mounts[1].Git.Enabled.Active() || mounts[1].Git.ID != "wo-site2" ||
+		mounts[1].Git.EffectiveMode() != def.GitModePull {
+		t.Fatalf("site2 git mount = %+v", mounts[1].Git)
+	}
+
+	raw, err := MarshalBytes(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`mount "/site1"`, `mount "/site2"`, `mode = "pull"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("round-trip missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestParseHostConfig_RejectsUnknownAttribute(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["wo.localhost"]
+
+route "/" {
+  web {
+    git {
+      enabled  = "on"
+      mode     = "pull"
+      id       = "site"
+      url      = "https://github.com/example/site.git"
+      interval = "5m"
+      username = "chef"
+      password = "secret"
+    }
+  }
+}
+`)
+	_, err := ParseHostConfig(path)
+	if err == nil {
+		t.Fatal("unknown git attribute was accepted")
+	}
+	if !strings.Contains(err.Error(), `unknown attribute "username"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseHostConfig_RejectsUnknownBlock(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["wo.localhost"]
+
+route "/" {
+  web {
+    root = "/var/www/wo"
+    gti {
+      enabled = "on"
+    }
+  }
+}
+`)
+	_, err := ParseHostConfig(path)
+	if err == nil {
+		t.Fatal("unknown web block was accepted")
+	}
+	if !strings.Contains(err.Error(), `unknown block "gti"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseHostConfig_RejectsDuplicateSingleBlock(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["wo.localhost"]
+
+route "/" {
+  web {
+    root = "/var/www/wo"
+
+    git {
+      enabled  = "on"
+      mode     = "pull"
+      id       = "one"
+      url      = "https://github.com/example/one.git"
+      interval = "5m"
+    }
+
+    git {
+      enabled  = "on"
+      mode     = "pull"
+      id       = "two"
+      url      = "https://github.com/example/two.git"
+      interval = "5m"
+    }
+  }
+}
+`)
+	_, err := ParseHostConfig(path)
+	if err == nil {
+		t.Fatal("duplicate git block was accepted")
+	}
+	if !strings.Contains(err.Error(), `duplicate block "git"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseHostConfig_RejectsLegacyAgberoAuthBlock(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["wo.localhost"]
+
+route "/" {
+  agbero_auth {
+    enabled = "on"
+    users   = ["admin:$2y$10$abcdefghijklmnopqrstuv"]
+  }
+
+  web { root = "/var/www/wo" }
+}
+`)
+	_, err := ParseHostConfig(path)
+	if err == nil {
+		t.Fatal("legacy agbero_auth block was accepted")
+	}
+	if !strings.Contains(err.Error(), `unknown block "agbero_auth"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseHostConfig_RelayPolicy(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["relay.example.com"]
+
+relay "agents" {
+  listen {
+    address  = "0.0.0.0"
+    port     = 8443
+    protocol = "https"
+  }
+
+  auth {
+    method = "enrollment"
+    token  = "ss://tunnel/relay-enroll"
+  }
+
+  policy {
+    namespace       = ""
+    allow_http      = true
+    allow_subdomain = true
+    allow_tcp_ports = ["20000-20100"]
+    allow_udp_ports = ["20000-20100"]
+    max_agents      = 100
+    max_streams     = 1000
+  }
+}
+`)
+	cfg, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	woos.DefaultHost(cfg)
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Relays) != 1 {
+		t.Fatalf("relays = %d, want 1", len(cfg.Relays))
+	}
+	r := cfg.Relays[0]
+	if r.Auth.Method != "enrollment" || r.Auth.Token.String() != "" {
+		t.Fatalf("auth = %+v", r.Auth)
+	}
+	if !r.Policy.AllowHTTP || !r.Policy.AllowSubdomain || len(r.Policy.AllowTCPPorts) != 1 {
+		t.Fatalf("policy did not decode: %+v", r.Policy)
+	}
+}
+
+func TestParseHostConfig_AgentExpose(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["local.example.com"]
+
+agent "default" {
+  relay     = "https://relay.example.com:8443"
+  enroll    = "ss://tunnel/relay-enroll"
+  local     = "http://127.0.0.1:8080"
+  reconnect = true
+  pool      = 4
+}
+
+route "/" {
+  web { root = "/var/www/local" }
+
+  expose "hello" {
+    via        = "default"
+    path       = true
+    subdomain  = true
+    local_path = "/"
+    local_host = "local.example.com"
+  }
+}
+`)
+	cfg, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	woos.DefaultHost(cfg)
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Agents) != 1 || cfg.Agents[0].Pool != 4 {
+		t.Fatalf("agents did not decode: %+v", cfg.Agents)
+	}
+	if len(cfg.Routes[0].Exposes) != 1 {
+		t.Fatalf("exposes did not decode: %+v", cfg.Routes[0].Exposes)
+	}
+	ex := cfg.Routes[0].Exposes[0]
+	if ex.ID != "hello" || ex.Via != "default" || !ex.Path || !ex.Subdomain {
+		t.Fatalf("expose = %+v", ex)
 	}
 }

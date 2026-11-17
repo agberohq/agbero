@@ -18,26 +18,36 @@ bind = ["8080", "8443"]
 # 2. TLS SETTINGS
 # -------------------------------------------------------------
 tls {
-  # mode: auto, local, letsencrypt, custom_ca, none
-  mode = "auto"
+  # Choose exactly one mode: none, auto, local, letsencrypt, or custom_ca.
+  # This reference uses Let's Encrypt. The local/custom_ca alternatives are
+  # shown commented below so copying the file does not enable contradictory
+  # certificate sources.
+  mode = "letsencrypt"
 
-  # For mode = "local"
-  local {
-    enabled   = "on"
-    cert_file = "/etc/certs/example.pem"
-    key_file  = "/etc/certs/example.key"
-  }
+  # Alternative 1: manually supplied certificate.
+  # local {
+  #   enabled   = "on"
+  #   cert_file = "/etc/certs/example.pem"
+  #   key_file  = "/etc/certs/example.key"
+  # }
 
-  # For mode = "letsencrypt"
+  # Alternative 2: ACME. `auto` selects local mode for *.localhost-style
+  # domains and Let's Encrypt otherwise; set mode explicitly in production.
   letsencrypt {
     enabled     = "on"
     email       = "admin@example.com"
-    staging     = false
+    staging     = "off"
     short_lived = false
   }
 
-  # mTLS: Client Certificate Authentication
-  client_auth = "require_and_verify" # none, request, require, verify_if_given, require_and_verify
+  # Alternative 3: internal CA.
+  # custom_ca {
+  #   enabled = "on"
+  #   root    = "/etc/certs/ca.pem"
+  # }
+
+  # mTLS: request/require client certificates from the configured CAs.
+  client_auth = "require_and_verify"
   client_cas  = ["/etc/certs/ca.pem"]
 }
 
@@ -61,10 +71,11 @@ headers {
   }
 }
 
-error_pages {
-  pages   = { "503" = "/errors/503.html" }
-  default = "/errors/generic.html"
-}
+# error_pages requires the referenced files to exist on disk:
+# error_pages {
+#   pages   = { "503" = "/var/www/errors/503.html" }
+#   default = "/var/www/errors/generic.html"
+# }
 
 # =============================================================================
 # 4. HTTP ROUTES
@@ -140,6 +151,7 @@ route "/api" {
       enabled  = "on"
       requests = 100
       window   = "1m"
+      burst    = 200
       key      = "Authorization"    # rate-limit by header value
     }
   }

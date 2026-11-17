@@ -1,21 +1,24 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/hub/authority"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/hub/tlss"
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
 	keeperlib "github.com/agberohq/keeper"
@@ -24,9 +27,18 @@ import (
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lh"
+	"golang.org/x/term"
 )
 
 var logger *ll.Logger
+
+// adminToken returns the admin bearer token from the flag or the environment.
+func adminToken(flagValue string) string {
+	if v := strings.TrimSpace(flagValue); v != "" {
+		return v
+	}
+	return strings.TrimSpace(os.Getenv("AGBERO_ADMIN_TOKEN"))
+}
 
 func main() {
 	logger = ll.New(def.Name,
@@ -34,12 +46,28 @@ func main() {
 		ll.WithFatalExits(true),
 	).Enable()
 
+	cli := ui.NewFlow()
 	shutdown := jack.NewShutdown(
-		jack.ShutdownWithTimeout(10*time.Second),
-		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
+		jack.ShutdownWithTimeout(def.DefaultShutdownGraceTimeout),
 		jack.ShutdownWithLogger(logger),
 		jack.ShutdownConcurrent(),
 	)
+
+	// The watchdog must start only when jack begins shutdown, not when the
+	// process starts. A priority -1 callback runs before all cleanup work.
+	var (
+		watchdog      *time.Timer
+		authorityLock *authority.Lock
+	)
+	if err := shutdown.RegisterWithPriority("ShutdownWatchdog", -1, func(context.Context) error {
+		watchdog = time.AfterFunc(def.DefaultShutdownHardTimeout, func() {
+			logger.Error("shutdown exceeded hard deadline; forcing exit")
+			os.Exit(1)
+		})
+		return nil
+	}); err != nil {
+		logger.Fatal("register shutdown watchdog: ", err)
+	}
 
 	flaggy.SetName(def.Name)
 	flaggy.SetDescription(def.Description)
@@ -117,8 +145,33 @@ func main() {
 	cmdSecret.AttachSubcommand(cmdSecretHash, 1)
 	cmdSecret.AttachSubcommand(cmdSecretPassword, 1)
 
+	cmdRelay := flaggy.NewSubcommand("relay")
+	cmdRelay.Description = "Diagnose relay configuration and connectivity"
+	cmdRelayCheck := flaggy.NewSubcommand("check")
+	cmdRelayCheck.Description = "Check a relay host or public URL"
+	cmdRelayCheck.AddPositionalValue(&cfg.RelayTarget, "target", 1, true, "Public URL or local host")
+	cmdRelayCheck.Bool(&cfg.RelayCheckServer, "s", "server", "Check the server side")
+	cmdRelayCheck.Bool(&cfg.RelayCheckClient, "c", "client", "Check the client side")
+	cmdRelayCheck.Int(&cfg.RelayCheckAttempts, "a", "attempts", "Public probe attempts with exponential backoff (default 4)")
+	cmdRelayCheck.Duration(&cfg.RelayCheckWait, "w", "wait", "Initial retry delay (default 1s)")
+	cmdRelayCheck.Duration(&cfg.RelayCheckTimeout, "t", "timeout", "Per-request timeout (default 5s)")
+	cmdRelayCheck.String(&cfg.RelayAdminToken, "k", "admin-token", "Bearer token for the relay admin API (default $AGBERO_ADMIN_TOKEN)")
+	cmdRelay.AttachSubcommand(cmdRelayCheck, 1)
+
+	cmdRelayDoctor := flaggy.NewSubcommand("doctor")
+	cmdRelayDoctor.Description = "Diagnose one agent end to end: config, DNS, TLS, auth, local target, public path and relay state"
+	cmdRelayDoctor.AddPositionalValue(&cfg.RelayAgent, "agent", 1, false, "Agent name")
+	cmdRelayDoctor.Int(&cfg.RelayCheckAttempts, "a", "attempts", "Public probe attempts with exponential backoff (default 4)")
+	cmdRelayDoctor.Duration(&cfg.RelayCheckWait, "w", "wait", "Initial retry delay (default 1s)")
+	cmdRelayDoctor.Duration(&cfg.RelayCheckTimeout, "t", "timeout", "Per-request timeout (default 5s)")
+	cmdRelayDoctor.String(&cfg.RelayAdminToken, "k", "admin-token", "Bearer token for the relay admin API (default $AGBERO_ADMIN_TOKEN)")
+	cmdRelay.AttachSubcommand(cmdRelayDoctor, 1)
+
 	cmdKeeper := flaggy.NewSubcommand("keeper")
 	cmdKeeper.Description = "Manage the encrypted secret store"
+
+	cmdKeeperCheck := flaggy.NewSubcommand("check")
+	cmdKeeperCheck.Description = "Report whether the keeper is locked"
 
 	cmdKeeperList := flaggy.NewSubcommand("list")
 	cmdKeeperList.Description = "List all keys in the keeper"
@@ -126,6 +179,14 @@ func main() {
 	cmdKeeperGet := flaggy.NewSubcommand("get")
 	cmdKeeperGet.Description = "Retrieve a value from the keeper"
 	cmdKeeperGet.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+
+	cmdKeeperMake := flaggy.NewSubcommand("make")
+	cmdKeeperMake.Description = "Generate a random secret and store it"
+	cmdKeeperMake.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+	if cfg.KeeperMakeLength == 0 {
+		cfg.KeeperMakeLength = 32
+	}
+	cmdKeeperMake.Int(&cfg.KeeperMakeLength, "l", "length", "Secret length in bytes")
 
 	cmdKeeperSet := flaggy.NewSubcommand("set")
 	cmdKeeperSet.Description = "Store a value in the keeper"
@@ -139,18 +200,62 @@ func main() {
 	cmdKeeperDelete.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
 	cmdKeeperDelete.Bool(&cfg.KeeperForce, "f", "force", "Skip confirmation prompt")
 
+	cmdKeeperUnlock := flaggy.NewSubcommand("unlock")
+	cmdKeeperUnlock.Description = "Unlock a running service Keeper over its local control endpoint"
+
 	cmdKeeperRotate := flaggy.NewSubcommand("rotate")
 	cmdKeeperRotate.Description = "Change the keeper master passphrase (re-encrypts all secrets)"
 
 	cmdKeeperHelp := flaggy.NewSubcommand("help")
 	cmdKeeperHelp.Description = "Show keeper command reference"
 
+	cmdKeeper.AttachSubcommand(cmdKeeperCheck, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperList, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperGet, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperMake, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperSet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperUnlock, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperHelp, 1)
+
+	flaggy.AttachSubcommand(cmdRelay, 1)
+
+	cmdMCP := flaggy.NewSubcommand("mcp")
+	cmdMCP.Description = "Manage the read/plan-only MCP control plane"
+
+	cmdMCPToken := flaggy.NewSubcommand("token")
+	cmdMCPToken.Description = "Mint, rotate, or revoke MCP tokens"
+
+	cmdMCPServe := flaggy.NewSubcommand("serve")
+	cmdMCPServe.Description = "Run the read/plan MCP server over stdio or unix socket (offline config mode)"
+
+	cmdMCPStatus := flaggy.NewSubcommand("status")
+	cmdMCPStatus.Description = "Show the configured MCP classes, transport, allowlist, and rate limit"
+
+	cmdMCPPolicy := flaggy.NewSubcommand("policy")
+	cmdMCPPolicy.Description = "Print the MCP capability registry"
+
+	cmdMCPTokenCreate := flaggy.NewSubcommand("create")
+	cmdMCPTokenCreate.Description = "Mint an MCP token (keeper-backed)"
+	cmdMCPTokenCreate.String(&cfg.MCPUser, "u", "user", "Operator name (default: $USER)")
+	cmdMCPTokenCreate.String(&cfg.MCPScope, "s", "scope", "Space-separated scopes: mcp:read, mcp:plan")
+	cmdMCPTokenCreate.Duration(&cfg.MCPTTL, "t", "ttl", "Token TTL (default 8h, max 24h)")
+
+	cmdMCPTokenRotate := flaggy.NewSubcommand("rotate")
+	cmdMCPTokenRotate.Description = "Rotate the MCP signing key in the keeper"
+
+	cmdMCPTokenRevoke := flaggy.NewSubcommand("revoke")
+	cmdMCPTokenRevoke.Description = "Revoke an MCP token by JTI"
+	cmdMCPTokenRevoke.AddPositionalValue(&cfg.MCPJTI, "jti", 1, true, "Token JTI")
+
+	cmdMCP.AttachSubcommand(cmdMCPServe, 1)
+	cmdMCP.AttachSubcommand(cmdMCPStatus, 1)
+	cmdMCP.AttachSubcommand(cmdMCPPolicy, 1)
+	cmdMCPToken.AttachSubcommand(cmdMCPTokenCreate, 1)
+	cmdMCPToken.AttachSubcommand(cmdMCPTokenRotate, 1)
+	cmdMCPToken.AttachSubcommand(cmdMCPTokenRevoke, 1)
+	cmdMCP.AttachSubcommand(cmdMCPToken, 1)
 
 	cmdAdmin := flaggy.NewSubcommand("admin")
 	cmdAdmin.Description = "Manage admin users and authentication"
@@ -278,6 +383,7 @@ func main() {
 	cmdRun.Description = "Run agbero using the discovered config"
 	cmdRun.Bool(&cfg.DevMode, "d", "dev", "Enable development mode")
 	cmdRun.Bool(&cfg.Silent, "", "silent", "Disable interactive prompts — fail if keeper is locked (useful for scripts and CI with a TTY)")
+	cmdRun.Bool(&cfg.ServiceMode, "", "service", "Service mode: never prompt; start locked and wait for 'agbero keeper unlock'")
 
 	cmdCluster := flaggy.NewSubcommand("cluster")
 	cmdCluster.Description = "Manage cluster membership"
@@ -291,6 +397,18 @@ func main() {
 
 	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
 	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
+
+	cmdLog := flaggy.NewSubcommand("log")
+	cmdLog.Description = "Tail the Agbero log file"
+	logLines := 200
+	var logFollow bool
+	cmdLog.Int(&logLines, "n", "lines", "Number of recent lines to print (default 200)")
+	cmdLog.Bool(&logFollow, "f", "follow", "Follow the log until interrupted")
+
+	cmdScan := flaggy.NewSubcommand("scan")
+	cmdScan.Description = "Read-only security, configuration, storage, and host posture scan"
+	var scanJSON bool
+	cmdScan.Bool(&scanJSON, "", "json", "Output findings as JSON")
 
 	cmdHome := flaggy.NewSubcommand("home")
 	cmdHome.Description = "Print or navigate to the agbero configuration directory"
@@ -324,6 +442,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdConfig, 1)
 	flaggy.AttachSubcommand(cmdSecret, 1)
 	flaggy.AttachSubcommand(cmdKeeper, 1)
+	flaggy.AttachSubcommand(cmdMCP, 1)
 	flaggy.AttachSubcommand(cmdAdmin, 1)
 	flaggy.AttachSubcommand(cmdHost, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
@@ -332,6 +451,8 @@ func main() {
 	flaggy.AttachSubcommand(cmdSystem, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
 	flaggy.AttachSubcommand(cmdCluster, 1)
+	flaggy.AttachSubcommand(cmdLog, 1)
+	flaggy.AttachSubcommand(cmdScan, 1)
 	flaggy.AttachSubcommand(cmdHome, 1)
 	flaggy.AttachSubcommand(cmdServe, 1)
 	flaggy.AttachSubcommand(cmdProxy, 1)
@@ -349,6 +470,9 @@ func main() {
 		return
 	}
 
+	if cmdScan.Used && scanJSON {
+		cfg.Silent = true
+	}
 	welcome(cfg.Silent)
 
 	if cmdServe.Used {
@@ -380,7 +504,7 @@ func main() {
 
 	if cmdInit.Used || cmdInstall.Used {
 		if _, err := helper.InitConfiguration(logger, ""); err != nil {
-			logger.Fatal("init failed: ", err)
+			cli.Abort("init failed: ", err)
 		}
 		return
 	}
@@ -392,7 +516,7 @@ func main() {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			resolvedPath, configExists = helper.ResolveConfigPath(logger, cfg.ConfigPath)
 			if !configExists {
-				logger.Fatalf("provided config file not found: %s", cfg.ConfigPath)
+				cli.Abortf("provided config file not found: %s", cfg.ConfigPath)
 			}
 		} else {
 			resolvedPath, configExists = helper.ResolveConfigPath(logger, "")
@@ -403,11 +527,11 @@ func main() {
 				path, err := helper.InstallConfiguration(logger, cfg.InstallHere)
 				if err != nil {
 					if strings.Contains(err.Error(), "already exists") {
-						logger.Info(err.Error() + " — skipping initialization.")
+						cli.Info(err.Error() + " — skipping initialization.")
 						resolvedPath = path
 						configExists = true
 					} else {
-						logger.Fatal("install failed: ", err)
+						cli.Abort("install failed: ", err)
 					}
 				} else {
 					resolvedPath = path
@@ -417,6 +541,16 @@ func main() {
 		}
 	} else {
 		resolvedPath, configExists = helper.ResolveConfigPath(logger, cfg.ConfigPath)
+	}
+
+	if cmdLog.Used {
+		hel.Log().Tail(resolvedPath, logLines, logFollow)
+		return
+	}
+
+	if cmdScan.Used {
+		hel.Scan().Run(resolvedPath, scanJSON)
+		return
 	}
 
 	if cmdUninstall.Used {
@@ -430,10 +564,10 @@ func main() {
 		return
 	}
 
-	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used
+	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCP.Used || cmdScan.Used || cmdLog.Used || cmdRelay.Used
 	if needsConfig && !configExists {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
-			logger.Fatal("config file not found at: ", cfg.ConfigPath)
+			cli.Abort("config file not found at: ", cfg.ConfigPath)
 		} else {
 			ctx := setup.NewContext(logger)
 			if ctx.Interactive {
@@ -446,21 +580,21 @@ func main() {
 				if err == nil && doInit {
 					path, err := helper.InitConfiguration(logger, "")
 					if err != nil {
-						logger.Fatal("init (config) failed: ", err)
+						cli.Abort("init (config) failed: ", err)
 					}
 					resolvedPath = path
 					configExists = true
 				} else {
-					logger.Fatal("config file required. Run 'agbero init' first.")
+					cli.Abort("config file required. Run 'agbero init' first.")
 				}
 			} else {
-				logger.Fatal("config file not found. Run 'agbero service install' to generate one.")
+				cli.Abort("config file not found. Run 'agbero service install' to generate one.")
 			}
 		}
 	}
 
 	if err := tlss.BootstrapEnv(logger); err != nil {
-		logger.Warnf("TLS env bootstrap: %v", err)
+		cli.Warnf("TLS env bootstrap: %v", err)
 	}
 
 	// Keeper lifecycle — single open for the whole process.
@@ -474,19 +608,55 @@ func main() {
 	//   CLI  → interactive (prompts user), AutoLock respected.
 
 	cmdSecretNeedsKeeper := cmdSecret.Used && (cmdSecretKeyInit.Used || cmdSecretToken.Used)
-	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used || cmdSecretNeedsKeeper {
+	cmdMCPNeedsKeeper := cmdMCPToken.Used && !cmdMCPTokenRevoke.Used
+	cmdKeeperNeedsStore := cmdKeeper.Used && !cmdKeeperUnlock.Used && !cmdKeeperCheck.Used
+	if cmdRun.Used || cmdKeeperNeedsStore || cmdAdmin.Used || cmdMCPNeedsKeeper || cmdSecretNeedsKeeper {
 		global, globalErr := helper.LoadGlobal(resolvedPath)
 		if globalErr != nil {
-			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
+			cli.Abort("failed to load config for keeper initialisation: ", globalErr)
 		}
 
-		logger, _ = zulu.Logging(&global.Logging, hel.Cfg.DevMode, shutdown)
-		logger.Info("logger recalibrated")
+		var err error
+		logger, err = zulu.Logging(&global.Logging, hel.Cfg.DevMode, shutdown)
+		if err != nil {
+			ll.Fatal("failed to initialise logger: ", err)
+			os.Exit(1)
+		}
+		logger.Debug("logger recalibrated")
 
 		dataDir := global.Storage.DataDir
 		ctx := setup.NewContext(logger)
 		if !dataDir.IsSet() {
 			dataDir = ctx.Paths.DataDir
+		}
+
+		// A running service holds the Keeper database open; the admin commands
+		// go through its control socket instead of timing out on the lock.
+		if cmdAdmin.Used {
+			if client, err := secrets.NewControlClient(dataDir); err == nil {
+				if _, statusErr := client.Status(); statusErr == nil {
+					runAdmin(hel.Admin().WithControl(client), cfg, resolvedPath, cmdAdminTOTP.Used, cmdAdminTOTPSetup.Used, cmdAdminTOTPQR.Used)
+					return
+				}
+			}
+		}
+
+		if cmdKeeperNeedsStore {
+			if client, err := secrets.NewControlClient(dataDir); err == nil {
+				if _, statusErr := client.Status(); statusErr == nil {
+					runKeeperControl(client, cfg, cmdKeeperMake.Used, cmdKeeperSet.Used, cmdKeeperGet.Used, cmdKeeperList.Used, cmdKeeperDelete.Used)
+					return
+				}
+			}
+		}
+
+		if cmdRun.Used {
+			lock, err := authority.TryAcquire(dataDir.Path())
+			if err != nil {
+				cli.Abort("data directory is already owned by another Agbero process: ", err)
+			}
+			authorityLock = lock
+			defer authorityLock.Release()
 		}
 
 		// isInteractive controls whether secrets.Open() may prompt via /dev/tty.
@@ -507,23 +677,68 @@ func main() {
 		// Using the raw string causes isInteractive=false even when no real passphrase
 		// exists, suppressing the prompt the user needs.
 		passphraseAvailable := secrets.PassphraseAvailable(&global.Security.Keeper)
-		isInteractive := !passphraseAvailable && ctx.Interactive && !cfg.Silent
+		// A manual keeper CLI invocation with a real terminal should prompt even
+		// when the environment is marked headless/CI. Service startup still uses
+		// ctx.Interactive and --service semantics.
+		keeperTTY := cmdKeeperNeedsStore && !cmdKeeperCheck.Used && term.IsTerminal(int(os.Stdin.Fd()))
+		isInteractive := !cmdKeeperCheck.Used && !passphraseAvailable && !cfg.Silent && (ctx.Interactive || keeperTTY) && (!cfg.ServiceMode || cmdKeeperNeedsStore)
 
 		store, storeErr := secrets.Open(secrets.Config{
 			DataDir:         dataDir,
 			Setting:         &global.Security.Keeper,
 			Logger:          logger,
 			Interactive:     isInteractive,
+			AllowLocked:     (cmdRun.Used && cfg.ServiceMode) || cmdKeeperCheck.Used,
 			DisableAutoLock: cmdRun.Used,
 		})
 
 		if storeErr != nil {
-			logger.Fatal("failed to open keeper: ", storeErr)
+			cli.Abort("failed to open keeper: ", storeErr)
 		}
 
-		if cmdRun.Used && store.IsLocked() {
+		// CLI keeper/admin commands must not silently operate on a locked
+		// store. `run` is the exception: service mode deliberately starts
+		// locked and waits for the unlock endpoint. If the normal open path
+		// did not prompt (for example because service mode suppressed it),
+		// prompt explicitly here.
+		if store.IsLocked() && !cmdRun.Used && !cmdKeeperCheck.Used {
+			if !keeperTTY {
+				_ = store.Close()
+				cli.Abort("keeper is locked; run in an interactive terminal, set AGBERO_KEEPER_PASSPHRASE, or configure keeper.passphrase")
+			}
+			u := ui.New()
+			result, err := u.PasswordRequired("Keeper Passphrase")
+			if err != nil {
+				_ = store.Close()
+				cli.Abort("read keeper passphrase: ", err)
+			}
+			pass := result.Bytes()
+			err = store.Unlock(pass)
+			result.Zero()
+			if err != nil {
+				_ = store.Close()
+				cli.Abort("failed to unlock keeper: ", err)
+			}
+		}
+
+		if cmdRun.Used && store.IsLocked() && cfg.Silent {
 			store.Close()
-			logger.Fatal("keeper is locked. Set AGBERO_KEEPER_PASSPHRASE (or AGBERO_PASSPHRASE), configure keeper.passphrase_file, or set keeper.passphrase in agbero.hcl")
+			cli.Abort("keeper is locked and --silent does not wait for manual unlock")
+		}
+		if cmdRun.Used {
+			ctl, err := secrets.StartControl(store, dataDir, logger)
+			if err != nil {
+				store.Close()
+				cli.Abort("keeper control endpoint could not be started: ", err)
+			}
+			if shutdown != nil {
+				_ = shutdown.RegisterFunc("KeeperControl", ctl.Close)
+			}
+			if store.IsLocked() {
+				logger.Warn("keeper is locked; waiting for 'agbero keeper unlock'")
+				ctl.Wait()
+				logger.Info("keeper unlocked; continuing startup")
+			}
 		}
 
 		// Register in both the keeper library's own global and agbero's secrets
@@ -560,7 +775,7 @@ func main() {
 				if n, err := strconv.Atoi(cfg.PasswordLength); err == nil {
 					length = n
 				} else {
-					logger.Fatal("invalid length: must be a number")
+					cli.Abort("invalid length: must be a number")
 				}
 			}
 			s.Password(length)
@@ -570,19 +785,53 @@ func main() {
 		return
 	}
 
+	if cmdRelay.Used {
+		switch {
+		case cmdRelayCheck.Used:
+			healthy := hel.Relay().Check(resolvedPath, cfg.RelayTarget, cfg.RelayCheckServer, cfg.RelayCheckClient, helper.ProbeOptions{
+				Attempts:   cfg.RelayCheckAttempts,
+				Wait:       cfg.RelayCheckWait,
+				Timeout:    cfg.RelayCheckTimeout,
+				AdminToken: adminToken(cfg.RelayAdminToken),
+			})
+			if !healthy {
+				os.Exit(1)
+			}
+		case cmdRelayDoctor.Used:
+			healthy := hel.Relay().Doctor(resolvedPath, cfg.RelayAgent, helper.ProbeOptions{
+				Attempts:   cfg.RelayCheckAttempts,
+				Wait:       cfg.RelayCheckWait,
+				Timeout:    cfg.RelayCheckTimeout,
+				AdminToken: adminToken(cfg.RelayAdminToken),
+			})
+			if !healthy {
+				os.Exit(1)
+			}
+		default:
+			flaggy.ShowHelpAndExit("relay")
+		}
+		return
+	}
+
 	if cmdKeeper.Used {
 		k := hel.Keeper()
 		switch {
 		case cmdKeeperHelp.Used:
 			flaggy.ShowHelpAndExit("keeper")
+		case cmdKeeperCheck.Used:
+			k.Check(resolvedPath)
 		case cmdKeeperList.Used:
 			k.List(resolvedPath)
 		case cmdKeeperGet.Used:
 			k.Get(resolvedPath, cfg.KeeperKey)
+		case cmdKeeperMake.Used:
+			k.Make(resolvedPath, cfg.KeeperKey, cfg.KeeperMakeLength)
 		case cmdKeeperSet.Used:
 			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
 		case cmdKeeperDelete.Used:
 			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
+		case cmdKeeperUnlock.Used:
+			k.Unlock(resolvedPath)
 		case cmdKeeperRotate.Used:
 			k.Rotate(resolvedPath)
 		default:
@@ -591,22 +840,35 @@ func main() {
 		return
 	}
 
-	if cmdAdmin.Used {
-		a := hel.Admin()
-		switch {
-		case cmdAdminTOTP.Used && cmdAdminTOTPSetup.Used:
-			a.TOTPSetup(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
-			}
-		case cmdAdminTOTP.Used && cmdAdminTOTPQR.Used:
-			a.TOTPQR(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
-			}
-		default:
-			flaggy.ShowHelpAndExit("admin")
+	if cmdMCP.Used {
+		if cmdMCPStatus.Used {
+			hel.MCP().Status(resolvedPath)
+			return
 		}
+		if cmdMCPPolicy.Used {
+			hel.MCP().Policy()
+			return
+		}
+		if cmdMCPServe.Used {
+			runMCPServe(resolvedPath, logger)
+			return
+		}
+		m := hel.MCP()
+		switch {
+		case cmdMCPToken.Used && cmdMCPTokenCreate.Used:
+			m.TokenCreate(resolvedPath, cfg.MCPUser, cfg.MCPScope, cfg.MCPTTL)
+		case cmdMCPToken.Used && cmdMCPTokenRotate.Used:
+			m.TokenRotate()
+		case cmdMCPToken.Used && cmdMCPTokenRevoke.Used:
+			m.TokenRevoke(resolvedPath, cfg.MCPJTI)
+		default:
+			flaggy.ShowHelpAndExit("mcp")
+		}
+		return
+	}
+
+	if cmdAdmin.Used {
+		runAdmin(hel.Admin(), cfg, resolvedPath, cmdAdminTOTP.Used, cmdAdminTOTPSetup.Used, cmdAdminTOTPQR.Used)
 		return
 	}
 
@@ -615,11 +877,11 @@ func main() {
 		switch {
 		case cmdConfigValidate.Used:
 			if err := ch.Validate(resolvedPath); err != nil {
-				logger.Fatal("invalid config: ", err)
+				cli.Abort("invalid config: ", err)
 			}
 		case cmdConfigReload.Used:
 			if err := ch.Reload(resolvedPath); err != nil {
-				logger.Fatal("reload failed: ", err)
+				cli.Abort("reload failed: ", err)
 			}
 			ui.New().SuccessLine("signal sent — check logs for reload status")
 		case cmdConfigView.Used:
@@ -642,7 +904,7 @@ func main() {
 		switch {
 		case cmdHostList.Used:
 			if err := hh.List(resolvedPath); err != nil {
-				logger.Fatal(err)
+				cli.Abort(err)
 			}
 		case cmdHostAdd.Used:
 			hh.Add(resolvedPath)
@@ -678,7 +940,7 @@ func main() {
 			Name:             def.Name,
 			DisplayName:      def.Display,
 			Description:      def.Description,
-			Arguments:        []string{"run", "-c", resolvedPath},
+			Arguments:        []string{"run", "--service", "-c", resolvedPath},
 			WorkingDirectory: filepath.Dir(resolvedPath),
 		}
 		if cfg.DevMode {
@@ -709,11 +971,11 @@ func main() {
 				sh.Uninstall(svc)
 			}
 		case cmdServiceStart.Used:
-			sh.Start(svc)
+			sh.Start(svc, resolvedPath)
 		case cmdServiceStop.Used:
 			sh.Stop(svc)
 		case cmdServiceRestart.Used:
-			sh.Restart(svc)
+			sh.Restart(svc, resolvedPath)
 		case cmdServiceStatus.Used:
 			sh.Status(svc, resolvedPath)
 		default:
@@ -762,6 +1024,9 @@ func main() {
 		keeperlib.GlobalClear()
 		secrets.SetGlobalStore(nil)
 		hel.Store.Close()
+	}
+	if watchdog != nil {
+		watchdog.Stop()
 	}
 
 	logger.Fields(
@@ -848,7 +1113,9 @@ func showHelpExamples() {
 			Title: "Keeper (secret store)",
 			Commands: []ui.HelpCmd{
 				{Cmd: exeName + " keeper list", Desc: "list all keys in the encrypted store"},
+				{Cmd: exeName + " keeper check", Desc: "report locked/unlocked state"},
 				{Cmd: exeName + " keeper get <key>", Desc: "retrieve a secret value"},
+				{Cmd: exeName + " keeper make <key>", Desc: "generate and store a random secret"},
 				{Cmd: exeName + " keeper set <key> <value>", Desc: "store a plain string secret"},
 				{Cmd: exeName + " keeper set <key> --file cert.pem", Desc: "store a certificate or binary file"},
 				{Cmd: exeName + " keeper set <key> <b64> --b64", Desc: "store pre-encoded base64 value"},
@@ -913,4 +1180,103 @@ func showHelpExamples() {
 			},
 		},
 	})
+}
+
+func runAdmin(a *helper.Admin, cfg *helper.Config, resolvedPath string, totp, setup, qr bool) {
+	switch {
+	case totp && setup:
+		a.TOTPSetup(resolvedPath, cfg.KeeperUser)
+		if cfg.KeeperOutFile != "" {
+			a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+		}
+	case totp && qr:
+		a.TOTPQR(resolvedPath, cfg.KeeperUser)
+		if cfg.KeeperOutFile != "" {
+			a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+		}
+	default:
+		flaggy.ShowHelpAndExit("admin")
+	}
+}
+
+func runKeeperControl(c *secrets.ControlClient, cfg *helper.Config, makeCmd, setCmd, getCmd, listCmd, deleteCmd bool) {
+	f := ui.NewFlow()
+	switch {
+	case makeCmd:
+		if cfg.KeeperKey == "" {
+			f.Abort("key is required")
+		}
+		length := cfg.KeeperMakeLength
+		if length <= 0 {
+			length = 32
+		}
+		f.Start("Generating secret for %s", cfg.KeeperKey)
+		secret, err := security.NewPassword().Generate(length)
+		if err != nil {
+			f.Abort("generate secret: ", err)
+		}
+		if err := c.Set(cfg.KeeperKey, secret); err != nil {
+			f.Abort("store secret: ", err)
+		}
+		f.Done("Secret stored in keeper")
+		f.UI().SecretBox("Generated secret — "+cfg.KeeperKey, secret)
+		f.Info("reference in agbero.hcl as:  ss://" + cfg.KeeperKey)
+	case setCmd:
+		if cfg.KeeperKey == "" {
+			f.Abort("key is required")
+		}
+		value := cfg.KeeperValue
+		if cfg.KeeperFile != "" {
+			data, err := os.ReadFile(cfg.KeeperFile)
+			if err != nil {
+				f.Abort("read value file: ", err)
+			}
+			value = string(data)
+		}
+		if cfg.KeeperB64 {
+			data, err := base64.StdEncoding.DecodeString(value)
+			if err != nil {
+				f.Abort("decode base64: ", err)
+			}
+			value = string(data)
+		}
+		f.Start("Storing %s", cfg.KeeperKey)
+		if err := c.Set(cfg.KeeperKey, value); err != nil {
+			f.Abort("store secret: ", err)
+		}
+		f.Done("Secret stored in keeper")
+		f.Info("reference in agbero.hcl as:  ss://" + cfg.KeeperKey)
+	case getCmd:
+		if cfg.KeeperKey == "" {
+			f.Abort("key is required")
+		}
+		value, err := c.Get(cfg.KeeperKey)
+		if err != nil {
+			f.Abort(err)
+		}
+		f.UI().KeyValue(cfg.KeeperKey, value)
+	case listCmd:
+		keys, err := c.List()
+		if err != nil {
+			f.Abort(err)
+		}
+		if len(keys) == 0 {
+			f.Info("store is empty")
+			return
+		}
+		rows := make([][]string, len(keys))
+		for i, key := range keys {
+			rows[i] = []string{key}
+		}
+		f.UI().Table([]string{"Key"}, rows)
+	case deleteCmd:
+		if cfg.KeeperKey == "" {
+			f.Abort("key is required")
+		}
+		f.Start("Deleting %s", cfg.KeeperKey)
+		if err := c.Delete(cfg.KeeperKey); err != nil {
+			f.Abort(err)
+		}
+		f.Done("Secret deleted")
+	}
 }

@@ -63,8 +63,7 @@ func (r routePayload) Validate() error {
 
 	// Backend address SSRF protection is enforced at the transport layer via
 	// safedial (internal/pkg/safedial), not here. Auto-registered routes
-	// always carry EnforceBackendSSRF — see operation/api/auto.go and
-	// handlers/routes.go — which blocks loopback, link-local, and cloud
+	// always carry EnforceBackendSSRF, which blocks loopback, link-local and
 	// metadata addresses at dial time regardless of what passes validation.
 	//
 	// We deliberately do NOT reject RFC-1918 addresses (10.x, 172.16.x,
