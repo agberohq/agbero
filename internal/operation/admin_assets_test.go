@@ -90,13 +90,17 @@ func TestAdminFocusDashboardAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"focusTopBackends", "focusHostSort", "data-focus-tab=\"logs\""} {
+	// The focus page is a single-host wallboard: live numbers for one host,
+	// nothing about other hostnames.
+	for _, want := range []string{"data-fw-tab=\"live\"", "data-fw-tab=\"logs\"", "fwRpsChart", "fwKiosk"} {
 		if !strings.Contains(string(html), want) {
 			t.Errorf("focus page missing %q", want)
 		}
 	}
-	if strings.Contains(string(html), "data-focus-tab=\"hosts\"") {
-		t.Error("focus page still has a separate Hosts tab")
+	for _, gone := range []string{"focusHostList", "focusHostSort", "All hosts"} {
+		if strings.Contains(string(html), gone) {
+			t.Errorf("focus page still lists other hosts (%q)", gone)
+		}
 	}
 	main, err := fs.ReadFile(adminFS, "admin/js/main.js")
 	if err != nil {
