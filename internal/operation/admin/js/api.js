@@ -326,6 +326,11 @@ export async function fetchBackendTelemetry(host, route, backend, range) {
     const qs = new URLSearchParams({ host, route, backend, range });
     return _safe(() => getApi().get(`/api/v1/telemetry/backend?${qs.toString()}`));
 }
+// Cache  /api/v1/cache
+export async function fetchCacheStats()   { return _safe(() => getApi().get('/api/v1/cache/stats')); }
+export async function purgeCacheTag(tag)  { return _safe(() => getApi().delete('/api/v1/cache/purge?tag=' + encodeURIComponent(tag))); }
+export async function clearCache()        { return _safe(() => getApi().delete('/api/v1/cache')); }
+
 export async function fetchTelemetryHosts() {
     return _safe(() => getApi().get('/api/v1/telemetry/hosts'));
 }

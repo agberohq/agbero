@@ -141,8 +141,11 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
         items.push({ label: 'Open Focus Dashboard', icon: '🎯', action: () => {
             window.open('/#/focus?host=' + encodeURIComponent(h), '_blank');
         }});
-        items.push({ label: 'Manage Route Auth', icon: '🔐', action: () => {
-            emit('app:navigate', { path: '/intercept?host=' + encodeURIComponent(h) });
+        items.push({ label: 'Manage Routes', icon: '🧭', action: () => {
+            emit('app:navigate', { path: '/routes?host=' + encodeURIComponent(h) });
+        }});
+        items.push({ label: 'Route Auth', icon: '🔐', action: () => {
+            emit('app:navigate', { path: '/routes?host=' + encodeURIComponent(h) + '&tab=access' });
         }});
         if (!protected_) {
             items.push({ label: 'Edit HCL', icon: '✏️', action: async () => {

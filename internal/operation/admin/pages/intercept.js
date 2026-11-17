@@ -15,22 +15,27 @@
  */
 import { notify } from '../lib/oja.full.esm.js';
 
-export default async function({ find, findAll, on, ready, inject }) {
+export default async function({ find, findAll, on, ready, inject, props, container }) {
     const { store, api, oja } = inject('app');
 
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
 
+    // Embedded in the route manager (pages/routes.js): host and route come from
+    // the parent, its own pickers are hidden, and the URL belongs to the parent.
+    const embedded = !!props?.embedded;
+    if (embedded) container?.querySelector('.route-auth-page')?.classList.add('route-auth-embedded');
     const params = new URLSearchParams((window.location.hash.replace(/^#/, '').split('?')[1] || ''));
     const state = {
-        host:  params.get('host') || '',
-        route: params.get('route') || '',
+        host:  (embedded ? props.host : params.get('host')) || '',
+        route: (embedded ? props.route : params.get('route')) || '',
         mode:  params.get('mode') === 'basic' ? 'basic' : 'protect',
         data:  null,
     };
 
     function setURL() {
+        if (embedded) return;
         const p = new URLSearchParams();
         if (state.host) p.set('host', state.host);
         if (state.route) p.set('route', state.route);

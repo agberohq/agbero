@@ -263,7 +263,8 @@ func TestInterceptIsSeparateFromFocusAndAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(hosts), "Manage Route Auth") {
+	// Route auth lives in the route manager's Access tab.
+	if !strings.Contains(string(hosts), "/routes?host=") || !strings.Contains(string(hosts), "tab=access") {
 		t.Error("hosts page has no entry point for route auth")
 	}
 	if !strings.Contains(string(hosts), "PROTECT") {
@@ -400,5 +401,35 @@ func TestAdminHCLFormatterKeepsNewlineAfterClosingBrace(t *testing.T) {
 	}
 	if strings.Contains(block, "lastWasNewline = true;") {
 		t.Fatal("formatter still marks the closing brace as a newline")
+	}
+}
+
+func TestAdminRouteManagerAssets(t *testing.T) {
+	for _, name := range []string{"admin/pages/routes.html", "admin/pages/routes.js"} {
+		if _, err := fs.ReadFile(adminFS, name); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+	main, err := fs.ReadFile(adminFS, "admin/js/main.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(main), "appGroup.Get('/routes'") {
+		t.Error("admin router does not register /routes")
+	}
+	html, _ := fs.ReadFile(adminFS, "admin/pages/routes.html")
+	for _, tab := range []string{"overview", "backends", "access", "policy", "cache", "hcl"} {
+		if !strings.Contains(string(html), `data-rm-tab="`+tab+`"`) {
+			t.Errorf("route manager missing the %s tab", tab)
+		}
+	}
+	js, _ := fs.ReadFile(adminFS, "admin/pages/routes.js")
+	if !strings.Contains(string(js), "#/routes?") {
+		t.Error("route manager does not use #/routes hash routing")
+	}
+	// Access reuses the auth manager; embedded, it must not rewrite the URL.
+	icept, _ := fs.ReadFile(adminFS, "admin/pages/intercept.js")
+	if !strings.Contains(string(icept), "if (embedded) return;") {
+		t.Error("intercept page rewrites the URL when embedded in the route manager")
 	}
 }
