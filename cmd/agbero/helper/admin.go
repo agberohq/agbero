@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -11,15 +12,54 @@ import (
 )
 
 type Admin struct {
-	p *Helper
+	p   *Helper
+	ctl *secrets.ControlClient
 }
 
-// requireStore returns the injected store or fatals with a clear message.
-func (a *Admin) requireStore() *keeperlib.Keeper {
+// WithControl routes Keeper reads and writes through a running service's
+// control socket. The service holds the Keeper database open, so opening it
+// again from the CLI would block until it times out.
+func (a *Admin) WithControl(c *secrets.ControlClient) *Admin {
+	a.ctl = c
+	return a
+}
+
+// adminKV is the part of Keeper the admin commands need.
+type adminKV interface {
+	Get(key string) ([]byte, error)
+	Set(key string, value []byte) error
+}
+
+type controlKV struct{ c *secrets.ControlClient }
+
+func (k controlKV) Get(key string) ([]byte, error) {
+	v, err := k.c.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	if v == "" {
+		return nil, os.ErrNotExist
+	}
+	return []byte(v), nil
+}
+
+func (k controlKV) Set(key string, value []byte) error { return k.c.Set(key, string(value)) }
+
+type keeperKV struct{ k *keeperlib.Keeper }
+
+func (k keeperKV) Get(key string) ([]byte, error)     { return k.k.Get(key) }
+func (k keeperKV) Set(key string, value []byte) error { return k.k.Set(key, value) }
+
+// requireStore returns the running service's Keeper when one is reachable,
+// otherwise the store opened by this process, or fatals with a clear message.
+func (a *Admin) requireStore() adminKV {
+	if a.ctl != nil {
+		return controlKV{a.ctl}
+	}
 	if a.p.Store == nil {
 		a.p.UI().Abort("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
 	}
-	return a.p.Store
+	return keeperKV{a.p.Store}
 }
 
 func (a *Admin) TOTPSetup(_ string, username string) {

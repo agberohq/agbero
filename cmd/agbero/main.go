@@ -630,6 +630,17 @@ func main() {
 			dataDir = ctx.Paths.DataDir
 		}
 
+		// A running service holds the Keeper database open; the admin commands
+		// go through its control socket instead of timing out on the lock.
+		if cmdAdmin.Used {
+			if client, err := secrets.NewControlClient(dataDir); err == nil {
+				if _, statusErr := client.Status(); statusErr == nil {
+					runAdmin(hel.Admin().WithControl(client), cfg, resolvedPath, cmdAdminTOTP.Used, cmdAdminTOTPSetup.Used, cmdAdminTOTPQR.Used)
+					return
+				}
+			}
+		}
+
 		if cmdKeeperNeedsStore {
 			if client, err := secrets.NewControlClient(dataDir); err == nil {
 				if _, statusErr := client.Status(); statusErr == nil {
@@ -857,21 +868,7 @@ func main() {
 	}
 
 	if cmdAdmin.Used {
-		a := hel.Admin()
-		switch {
-		case cmdAdminTOTP.Used && cmdAdminTOTPSetup.Used:
-			a.TOTPSetup(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
-			}
-		case cmdAdminTOTP.Used && cmdAdminTOTPQR.Used:
-			a.TOTPQR(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
-			}
-		default:
-			flaggy.ShowHelpAndExit("admin")
-		}
+		runAdmin(hel.Admin(), cfg, resolvedPath, cmdAdminTOTP.Used, cmdAdminTOTPSetup.Used, cmdAdminTOTPQR.Used)
 		return
 	}
 
@@ -1183,6 +1180,23 @@ func showHelpExamples() {
 			},
 		},
 	})
+}
+
+func runAdmin(a *helper.Admin, cfg *helper.Config, resolvedPath string, totp, setup, qr bool) {
+	switch {
+	case totp && setup:
+		a.TOTPSetup(resolvedPath, cfg.KeeperUser)
+		if cfg.KeeperOutFile != "" {
+			a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+		}
+	case totp && qr:
+		a.TOTPQR(resolvedPath, cfg.KeeperUser)
+		if cfg.KeeperOutFile != "" {
+			a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+		}
+	default:
+		flaggy.ShowHelpAndExit("admin")
+	}
 }
 
 func runKeeperControl(c *secrets.ControlClient, cfg *helper.Config, makeCmd, setCmd, getCmd, listCmd, deleteCmd bool) {
