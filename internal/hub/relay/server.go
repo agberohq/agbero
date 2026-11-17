@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/oshodi"
 	"github.com/hashicorp/yamux"
 	"github.com/olekukonko/ll"
@@ -28,7 +29,7 @@ var relayIDPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`
 
 var relayReservedIDs = map[string]bool{
 	"admin": true, "api": true, "www": true, "mail": true,
-	"relay": true, "_agbero": true, "well-known": true,
+	def.RelayName: true, "_agbero": true, "well-known": true,
 }
 
 // ServerConfig describes one remote relay listener.
@@ -133,17 +134,17 @@ type route struct {
 // NewServer constructs a relay server. It does not listen until Start is called.
 func NewServer(cfg ServerConfig) *Server {
 	if cfg.Logger == nil {
-		cfg.Logger = ll.New("relay").Disable()
+		cfg.Logger = ll.New(def.RelayName).Disable()
 	}
 	var store *oshodi.Bucket
 	if cfg.DB != nil {
-		if b, err := cfg.DB.Bucket("relay_routes"); err == nil {
+		if b, err := cfg.DB.Bucket(def.RelayBucket); err == nil {
 			store = b
 		}
 	}
 	return &Server{
 		cfg:          cfg,
-		logger:       cfg.Logger.Namespace("relay"),
+		logger:       cfg.Logger.Namespace(def.RelayName),
 		sessions:     make(map[string]*session),
 		routes:       make(map[string]*route),
 		done:         make(chan struct{}),
@@ -173,7 +174,7 @@ func (s *Server) Start() error {
 		defer s.wg.Done()
 		s.acceptLoop(ctx)
 	}()
-	s.logger.Fields("relay", s.cfg.Name, "listen", s.cfg.Listen, "domain", s.cfg.BaseDomain).Info("relay listener started")
+	s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldListen, s.cfg.Listen, def.FieldDomain, s.cfg.BaseDomain).Info("relay listener started")
 	return nil
 }
 
@@ -252,7 +253,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 				return
 			default:
 			}
-			s.logger.Fields("relay", s.cfg.Name, "err", err).Warn("relay accept failed")
+			s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldErr, err).Warn("relay accept failed")
 			continue
 		}
 		go s.handleConn(ctx, conn)
@@ -260,8 +261,8 @@ func (s *Server) acceptLoop(ctx context.Context) {
 }
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
-	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
-	br := bufio.NewReaderSize(conn, 4096)
+	_ = conn.SetDeadline(time.Now().Add(def.RelayHandshakeTimeout))
+	br := bufio.NewReaderSize(conn, def.RelayBufioBytes)
 	head, err := br.Peek(len(muxMagic))
 	_ = conn.SetDeadline(time.Time{})
 	if err != nil {
@@ -272,7 +273,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		_, _ = br.Discard(len(muxMagic))
 		mux, err := yamux.Server(&muxConn{Conn: conn, r: br}, newMuxConfig())
 		if err != nil {
-			s.logger.Fields("relay", s.cfg.Name, "err", err).Warn("relay mux handshake failed")
+			s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldErr, err).Warn("relay mux handshake failed")
 			_ = conn.Close()
 			return
 		}
@@ -285,12 +286,12 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 // handleMux accepts the single control stream of a muxed agent connection.
 // Work streams are opened by the relay from the same yamux session.
 func (s *Server) handleMux(ctx context.Context, raw net.Conn, mux *yamux.Session) {
-	defer mux.Close()
+	defer func() { _ = mux.Close() }()
 	stream, err := mux.AcceptStream()
 	if err != nil {
 		return
 	}
-	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = stream.SetReadDeadline(time.Now().Add(def.RelayHandshakeTimeout))
 	var h hello
 	if err := readFrame(stream, &h); err != nil {
 		return
@@ -312,7 +313,7 @@ func (s *Server) handleMux(ctx context.Context, raw net.Conn, mux *yamux.Session
 	if err := writeFrame(stream, controlAck(credential)); err != nil {
 		return
 	}
-	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = stream.SetReadDeadline(time.Now().Add(def.RelayHandshakeTimeout))
 	var reg registration
 	if err := readFrame(stream, &reg); err != nil {
 		return
@@ -324,8 +325,8 @@ func (s *Server) handleMux(ctx context.Context, raw net.Conn, mux *yamux.Session
 // handleRaw serves the pre-mux check protocol. Old agents that still use data
 // connections get an explicit upgrade error instead of hanging.
 func (s *Server) handleRaw(conn net.Conn, r io.Reader) {
-	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetReadDeadline(time.Now().Add(def.RelayHandshakeTimeout))
 	var h hello
 	if err := readFrame(r, &h); err != nil {
 		return
@@ -349,7 +350,7 @@ func (s *Server) handleRaw(conn net.Conn, r io.Reader) {
 			// doctors both accept.
 			_ = writeFrame(conn, ack{OK: true, Session: s.sessionReport(h.Agent)})
 		} else {
-			_ = writeFrame(conn, ack{Error: "authentication failed"})
+			_ = writeFrame(conn, ack{Error: def.ErrRelayAuth})
 		}
 		return
 	}
@@ -382,7 +383,7 @@ func (s *Server) authenticate(h hello) (string, error) {
 // advertised heartbeat lets a new agent keep the connection alive through NATs
 // and firewalls; agents that predate it ignore the field.
 func controlAck(credential string) ack {
-	return ack{OK: true, Credential: credential, HeartbeatSeconds: int(controlHeartbeat / time.Second)}
+	return ack{OK: true, Credential: credential, HeartbeatSeconds: int(def.RelayHeartbeat / time.Second)}
 }
 
 func (s *Server) handleControl(ctx context.Context, conn net.Conn, mux *yamux.Session, remote, agent string, reg registration) {
@@ -402,13 +403,13 @@ func (s *Server) handleControl(ctx context.Context, conn net.Conn, mux *yamux.Se
 		s.reconnects[agent] = 0
 	}
 	if old := s.sessions[agent]; old != nil {
-		s.recordEventLocked(agent, SessionEvent{Kind: "replaced", Remote: old.remote,
+		s.recordEventLocked(agent, SessionEvent{Kind: def.RelayEventReplaced, Remote: old.remote,
 			Reason: "replaced by a new session from " + remote})
 		old.bye("session replaced")
 		old.close()
 	}
 	s.sessions[agent] = sess
-	s.recordEventLocked(agent, SessionEvent{Kind: "opened", Remote: remote})
+	s.recordEventLocked(agent, SessionEvent{Kind: def.RelayEventOpened, Remote: remote})
 	s.mu.Unlock()
 
 	if err := s.applyRegistration(sess, reg); err != nil {
@@ -428,12 +429,12 @@ func (s *Server) handleControl(ctx context.Context, conn net.Conn, mux *yamux.Se
 
 	reason := "control connection closed"
 	defer func() {
-		s.recordEvent(agent, SessionEvent{Kind: "closed", Remote: sess.remote, Reason: reason})
-		s.logger.Fields("relay", s.cfg.Name, "agent", agent, "remote", sess.remote,
+		s.recordEvent(agent, SessionEvent{Kind: def.RelayEventClosed, Remote: sess.remote, Reason: reason})
+		s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, agent, def.FieldRemote, sess.remote,
 			"duration", time.Since(sess.connectedAt).Round(time.Millisecond),
 			"reason", reason).Info("relay agent session closed")
 	}()
-	s.logger.Fields("relay", s.cfg.Name, "agent", agent, "remote", sess.remote).Info("relay agent session opened")
+	s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, agent, def.FieldRemote, sess.remote).Info("relay agent session opened")
 
 	for {
 		var next registration
@@ -598,17 +599,6 @@ func (s *Server) noteError(msg string) {
 	s.mu.Unlock()
 }
 
-func (s *Server) recordAuth(agent, mode, presented, expected, reason string) {
-	s.mu.Lock()
-	s.lastError = reason
-	s.lastErrorAt = time.Now().UTC()
-	s.lastAuth = &AuthFailure{
-		Agent: agent, Mode: mode, Presented: fingerprint(presented),
-		Expected: fingerprint(expected), Reason: reason, At: time.Now().UTC(),
-	}
-	s.mu.Unlock()
-}
-
 func (s *Server) validateExposure(ex registeredExpose) error {
 	if !relayIDPattern.MatchString(ex.ID) || relayReservedIDs[ex.ID] {
 		return fmt.Errorf("relay: invalid or reserved expose id %q", ex.ID)
@@ -665,23 +655,23 @@ func (s *Server) persistLocked(agent string, reg registration, active bool) {
 
 func (s *Server) startTCPLocked(sess *session, ex registeredExpose) {
 	if !portAllowed(s.cfg.Policy.AllowTCPPorts, ex.TCPPort) {
-		s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "port", ex.TCPPort).Warn("relay tcp port rejected")
+		s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, sess.agent, def.FieldPort, ex.TCPPort).Warn("relay tcp port rejected")
 		return
 	}
-	host := "0.0.0.0"
+	host := def.RelayBindAny
 	if h, _, err := net.SplitHostPort(s.cfg.Listen); err == nil && h != "" {
 		host = h
 	}
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", ex.TCPPort))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := net.Listen(def.TCP, addr)
 	if err != nil {
-		s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "addr", addr, "err", err).Error("relay tcp listener failed")
+		s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, sess.agent, def.FieldAddr, addr, def.FieldErr, err).Error("relay tcp listener failed")
 		return
 	}
 	tl := &tcpListener{ln: ln, port: ex.TCPPort, target: ex.ID, session: sess}
 	s.tcpListeners[ex.TCPPort] = tl
 	go s.acceptTCP(tl)
-	s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "port", ex.TCPPort).Info("relay tcp listener started")
+	s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, sess.agent, def.FieldPort, ex.TCPPort).Info("relay tcp listener started")
 }
 
 func (s *Server) acceptTCP(tl *tcpListener) {
@@ -691,15 +681,15 @@ func (s *Server) acceptTCP(tl *tcpListener) {
 			return
 		}
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), def.RelayAcceptWait)
 			tunnel, err := tl.session.openWork(ctx, tl.target)
 			cancel()
 			if err != nil {
 				_ = conn.Close()
 				return
 			}
-			defer tunnel.Close()
-			defer conn.Close()
+			defer func() { _ = tunnel.Close() }()
+			defer func() { _ = conn.Close() }()
 			done := make(chan struct{}, 2)
 			go func() {
 				n, _ := io.Copy(tunnel, conn)
@@ -765,27 +755,27 @@ func portAllowed(ranges []string, port int) bool {
 
 func (s *Server) startUDPLocked(sess *session, ex registeredExpose) {
 	if !portAllowed(s.cfg.Policy.AllowUDPPorts, ex.UDPPort) {
-		s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "port", ex.UDPPort).Warn("relay udp port rejected")
+		s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, sess.agent, def.FieldPort, ex.UDPPort).Warn("relay udp port rejected")
 		return
 	}
-	host := "0.0.0.0"
+	host := def.RelayBindAny
 	if h, _, err := net.SplitHostPort(s.cfg.Listen); err == nil && h != "" {
 		host = h
 	}
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", ex.UDPPort))
 	pc, err := net.ListenPacket("udp", addr)
 	if err != nil {
-		s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "addr", addr, "err", err).Error("relay udp listener failed")
+		s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, sess.agent, def.FieldAddr, addr, def.FieldErr, err).Error("relay udp listener failed")
 		return
 	}
 	ul := &udpListener{pc: pc, port: ex.UDPPort, target: ex.ID, session: sess, clients: make(map[string]*udpClient)}
 	s.udpListeners[ex.UDPPort] = ul
 	go s.serveUDP(ul)
-	s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "port", ex.UDPPort).Info("relay udp listener started")
+	s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, sess.agent, def.FieldPort, ex.UDPPort).Info("relay udp listener started")
 }
 
 func (s *Server) serveUDP(ul *udpListener) {
-	buf := make([]byte, 65535)
+	buf := make([]byte, def.RelayUDPBufferBytes)
 	for {
 		n, addr, err := ul.pc.ReadFrom(buf)
 		if err != nil {
@@ -797,7 +787,7 @@ func (s *Server) serveUDP(ul *udpListener) {
 		ul.mu.Unlock()
 
 		if client == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), def.RelayAcceptWait)
 			tunnel, err := ul.session.openWork(ctx, ul.target)
 			cancel()
 			if err != nil {
@@ -901,13 +891,13 @@ func (s *Server) newRoute(sess *session, ex registeredExpose, prefix string, sub
 			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "err", err).Warn("relay proxy failed")
+			s.logger.Fields(def.FieldRelay, s.cfg.Name, def.FieldAgent, sess.agent, def.FieldErr, err).Warn("relay proxy failed")
 			s.noteError(fmt.Sprintf("%s %s: %v", r.Method, r.URL.Path, err))
 			sess.mu.Lock()
 			sess.lastError = err.Error()
 			sess.lastErrorAt = time.Now().UTC()
 			sess.mu.Unlock()
-			s.recordEvent(sess.agent, SessionEvent{Kind: "proxy_error", Remote: sess.remote, Reason: err.Error()})
+			s.recordEvent(sess.agent, SessionEvent{Kind: def.RelayEventProxyError, Remote: sess.remote, Reason: err.Error()})
 			http.Error(w, "Relay unavailable", http.StatusBadGateway)
 		},
 	}
@@ -1033,7 +1023,7 @@ func (s *session) bye(reason string) {
 	if s.control == nil {
 		return
 	}
-	_ = s.control.SetWriteDeadline(time.Now().Add(time.Second))
+	_ = s.control.SetWriteDeadline(time.Now().Add(def.RelayByeTimeout))
 	_ = writeFrame(s.control, ack{Error: "relay: " + reason})
 	_ = s.control.SetWriteDeadline(time.Time{})
 }

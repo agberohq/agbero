@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // ResolveLocal derives the agent's local Agbero target from the host config.
@@ -38,17 +39,17 @@ func ResolveLocal(h *alaye.Host, a alaye.Agent) (local, sni string, insecure boo
 		}
 		switch {
 		case has443:
-			local = "https://127.0.0.1:443"
+			local = def.Https + "://" + def.IPv4LoopbackSAN + ":" + def.RelayHTTPSPort
 		case has80:
-			local = "http://127.0.0.1:80"
+			local = def.Http + "://" + def.IPv4LoopbackSAN + ":" + def.RelayHTTPPort
 		case hasOther != "":
-			local = "http://127.0.0.1:" + hasOther
+			local = def.Http + "://" + def.IPv4LoopbackSAN + ":" + hasOther
 		}
 	}
 	if local != "" {
-		if u, err := url.Parse(local); err == nil && u.Scheme == "https" {
+		if u, err := url.Parse(local); err == nil && u.Scheme == def.Https {
 			host := u.Hostname()
-			if host == "127.0.0.1" || host == "::1" || host == "localhost" {
+			if host == def.IPv4LoopbackSAN || host == def.IPv6LoopbackSAN || host == def.Localhost {
 				insecure = true
 			}
 		}

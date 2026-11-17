@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,11 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	relayhub "github.com/agberohq/agbero/internal/hub/relay"
 )
 
-// churnWindow is how far back the doctor looks for reconnects and replacements.
-const churnWindow = 15 * time.Minute
+// agberoRunSubcommand is the CLI verb that starts the proxy.
+const agberoRunSubcommand = "run"
 
 type agberoProcess struct {
 	PID  int
@@ -49,7 +51,7 @@ func localAgberoProcesses() ([]agberoProcess, error) {
 		}
 		isRun := false
 		for _, a := range fields[2:] {
-			if a == "run" {
+			if a == agberoRunSubcommand {
 				isRun = true
 				break
 			}
@@ -77,39 +79,39 @@ func describeProcesses(procs []agberoProcess) string {
 func doctorProcesses(rep *doctorReport, name string, report *relayhub.SessionReport) {
 	procs, err := localAgberoProcesses()
 	if err != nil {
-		rep.add("processes", doctorSkip, err.Error())
+		rep.add(stageProcesses, doctorSkip, err.Error())
 		return
 	}
 	switch {
 	case len(procs) == 0 && report != nil && report.Connected:
-		rep.add("processes", doctorFail,
+		rep.add(stageProcesses, doctorFail,
 			fmt.Sprintf("no `agbero run` process on this host, yet the relay has a live session for %s from %s", name, report.Agent.Remote),
 			"another host is running agent "+name+"; stop it or give one of them a different agent name")
 	case len(procs) == 0:
-		rep.add("processes", doctorFail, "no `agbero run` process on this host, so agent "+name+" is not running here",
+		rep.add(stageProcesses, doctorFail, "no `agbero run` process on this host, so agent "+name+" is not running here",
 			"start agbero on this host")
 	case len(procs) > 1:
-		rep.add("processes", doctorFail,
+		rep.add(stageProcesses, doctorFail,
 			fmt.Sprintf("%d agbero processes are running (%s)", len(procs), describeProcesses(procs)),
 			"each process with this config connects as "+name+" and the relay keeps only the newest session; stop all but one")
 	default:
-		rep.add("processes", doctorPass, describeProcesses(procs))
+		rep.add(stageProcesses, doctorPass, describeProcesses(procs))
 	}
 }
 
 // doctorSession turns the relay's session report into stages.
 func doctorSession(rep *doctorReport, name string, exposes []string, relayAddrs []string, report *relayhub.SessionReport) {
 	if report == nil {
-		rep.add("session", doctorSkip, "the relay does not report session state (relay build predates it)",
+		rep.add(stageSession, doctorSkip, "the relay does not report session state (relay build predates it)",
 			"redeploy the relay with this build so the doctor can see the agent's session")
 		return
 	}
 	if !report.Connected {
 		detail := "the relay has no live session for " + name
-		if ev := report.LastEvent("closed"); ev != nil {
+		if ev := report.LastEvent(def.RelayEventClosed); ev != nil {
 			detail += fmt.Sprintf("; last session from %s closed %s ago: %s", ev.Remote, ago(report, ev.At), ev.Reason)
 		}
-		rep.add("session", doctorFail, detail,
+		rep.add(stageSession, doctorFail, detail,
 			"agbero log on this host: 'relay connection failed' and 'relay control connection closed'")
 		return
 	}
@@ -117,43 +119,44 @@ func doctorSession(rep *doctorReport, name string, exposes []string, relayAddrs 
 	ag := report.Agent
 	sessAge := report.Now.Sub(ag.ConnectedAt)
 	detail := fmt.Sprintf("connected %s ago from %s, streams %d", short(sessAge), ag.Remote, ag.Streams)
-	opened := report.Count("opened", churnWindow)
-	replaced := report.Count("replaced", churnWindow)
+	opened := report.Count(def.RelayEventOpened, def.RelayChurnWindow)
+	replaced := report.Count("replaced", def.RelayChurnWindow)
 	hosts := report.RemoteHosts()
 	relaySelf := ""
 	for _, h := range hosts {
+		hip := net.ParseIP(h)
 		for _, a := range relayAddrs {
-			if strings.EqualFold(h, a) {
+			if aip := net.ParseIP(a); (hip != nil && aip != nil && hip.Equal(aip)) || strings.EqualFold(h, a) {
 				relaySelf = h
 			}
 		}
 	}
 	switch {
 	case relaySelf != "":
-		rep.add("session", doctorFail,
+		rep.add(stageSession, doctorFail,
 			fmt.Sprintf("%s; a session for %s was opened from %s, which is the relay host's own address", detail, name, relaySelf),
 			"an agbero on the relay host has an agent block named "+name+"; remove it there (agbero relay doctor "+name+" on the relay host shows which host config), or rename one of the agents",
 			"while both run they replace each other's session and rotate each other's credential, which shows up as auth failures on the relay")
 	case len(hosts) > 1:
-		rep.add("session", doctorFail,
+		rep.add(stageSession, doctorFail,
 			fmt.Sprintf("%s; sessions for %s came from %d addresses: %s", detail, name, len(hosts), strings.Join(hosts, ", ")),
 			"two agent hosts use the name "+name+" and replace each other; stop one or rename it")
 	case replaced >= 2:
-		rep.add("session", doctorFail,
-			fmt.Sprintf("%s; session replaced %d times in %s", detail, replaced, churnWindow),
+		rep.add(stageSession, doctorFail,
+			fmt.Sprintf("%s; session replaced %d times in %s", detail, replaced, def.RelayChurnWindow),
 			"two processes behind the same address use the name "+name+"; check the processes stage above and any other machine on this network")
 	case opened >= 3:
 		reason := ""
-		if ev := report.LastEvent("closed"); ev != nil {
+		if ev := report.LastEvent(def.RelayEventClosed); ev != nil {
 			reason = ", last close: " + ev.Reason
 		}
-		rep.add("session", doctorWarn,
-			fmt.Sprintf("%s; reconnected %d times in %s%s", detail, opened, churnWindow, reason),
+		rep.add(stageSession, doctorWarn,
+			fmt.Sprintf("%s; reconnected %d times in %s%s", detail, opened, def.RelayChurnWindow, reason),
 			"the control connection keeps dropping; agbero log on this host: 'relay control connection closed'")
-	case sessAge < 30*time.Second:
-		rep.add("session", doctorWarn, detail+"; the session is very new, rerun to see whether it holds")
+	case sessAge < def.RelayFreshSessionAge:
+		rep.add(stageSession, doctorWarn, detail+"; the session is very new, rerun to see whether it holds")
 	default:
-		rep.add("session", doctorPass, detail)
+		rep.add(stageSession, doctorPass, detail)
 	}
 
 	live := map[string]bool{}
@@ -178,7 +181,7 @@ func doctorSession(rep *doctorReport, name string, exposes []string, relayAddrs 
 		}
 	}
 
-	if ev := report.LastEvent("proxy_error"); ev != nil && report.Now.Sub(ev.At) <= churnWindow {
+	if ev := report.LastEvent(def.RelayEventProxyError); ev != nil && report.Now.Sub(ev.At) <= def.RelayChurnWindow {
 		n := ev.Count
 		if n == 0 {
 			n = 1
@@ -192,7 +195,7 @@ func doctorSession(rep *doctorReport, name string, exposes []string, relayAddrs 
 // relayErrorsSince fetches the session report again after a failed public
 // probe and returns the proxy errors the relay recorded for it.
 func relayErrorsSince(relayURL, agent, secret string, insecure bool, since time.Time) []relayhub.SessionEvent {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), def.RelayAuthTimeout)
 	defer cancel()
 	report, err := relayhub.ProbeSession(ctx, relayURL, agent, secret, "", insecure)
 	if err != nil || report == nil {
@@ -200,7 +203,7 @@ func relayErrorsSince(relayURL, agent, secret string, insecure bool, since time.
 	}
 	var out []relayhub.SessionEvent
 	for _, ev := range report.History {
-		if ev.Kind == "proxy_error" && !ev.At.Before(since) {
+		if ev.Kind == def.RelayEventProxyError && !ev.At.Before(since) {
 			out = append(out, ev)
 		}
 	}

@@ -5,26 +5,26 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/hashicorp/yamux"
 )
 
 // muxMagic prefixes the yamux handshake so a relay can keep serving the check
 // protocol on the same port while agents negotiate the muxed protocol.
-const muxMagic = "AGBY"
+const muxMagic = def.RelayMuxMagic
 
 func newMuxConfig() *yamux.Config {
 	cfg := yamux.DefaultConfig()
-	cfg.AcceptBacklog = 256
+	cfg.AcceptBacklog = def.RelayMuxAcceptBacklog
 	cfg.EnableKeepAlive = true
-	cfg.KeepAliveInterval = 30 * time.Second
-	cfg.ConnectionWriteTimeout = 10 * time.Second
-	// A stream carries a whole HTTP request/response; the default 256 KiB
-	// window throttles uploads and large bodies.
-	cfg.MaxStreamWindowSize = 6 << 20
-	cfg.StreamOpenTimeout = 15 * time.Second
-	cfg.StreamCloseTimeout = 30 * time.Second
+	cfg.KeepAliveInterval = def.RelayMuxKeepAlive
+	cfg.ConnectionWriteTimeout = def.RelayMuxWriteTimeout
+	// A stream carries a whole HTTP request/response; the default window
+	// throttles uploads and large bodies.
+	cfg.MaxStreamWindowSize = def.RelayMuxStreamWindow
+	cfg.StreamOpenTimeout = def.RelayMuxStreamOpen
+	cfg.StreamCloseTimeout = def.RelayMuxStreamClose
 	cfg.LogOutput = io.Discard
 	return cfg
 }

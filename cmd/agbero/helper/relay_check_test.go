@@ -26,7 +26,7 @@ func TestProbeWithRetryReportsFlapping(t *testing.T) {
 			http.Error(w, "Relay unavailable", http.StatusBadGateway)
 			return
 		}
-		fmt.Fprint(w, "ok")
+		_, _ = fmt.Fprint(w, "ok")
 	}))
 	defer srv.Close()
 

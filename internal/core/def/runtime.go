@@ -399,9 +399,9 @@ const (
 	ProtectPathSeg    = "_agbero"
 	ProtectCookieName = "protect_session"
 	ProtectCSRFName   = "protect_csrf"
-	StateTTL             = 10 * time.Minute
-	DefaultByteLen       = 16
-	CallBackCodeKey      = "code"
+	StateTTL          = 10 * time.Minute
+	DefaultByteLen    = 16
+	CallBackCodeKey   = "code"
 )
 
 const (

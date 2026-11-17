@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/scan"
@@ -24,7 +25,7 @@ func (s *Scan) Run(configPath string, jsonOut bool) {
 	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(s.p.Logger))
 	hosts, err := hm.LoadCanonicalByDomain()
 	if err != nil {
-		s.p.UI().Abort("load hosts: ", err)
+		s.p.UI().Abort(def.ErrLoadHosts, err)
 	}
 	home := filepath.Dir(configPath)
 	dataDir := global.Storage.DataDir.Path()

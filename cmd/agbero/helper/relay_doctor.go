@@ -11,11 +11,15 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	relayhub "github.com/agberohq/agbero/internal/hub/relay"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 )
+
+// stageRelayURL is the doctor's stage name for endpoint resolution.
+const stageRelayURL = "relay URL"
 
 type doctorStatus string
 
@@ -140,12 +144,12 @@ func (r *Relay) Doctor(configPath, name string, opts ProbeOptions) bool {
 	name = strings.TrimSpace(name)
 	global, err := LoadGlobal(configPath)
 	if err != nil {
-		f.Abort("load config: ", err)
+		f.Abort(def.ErrLoadConfig, err)
 	}
 	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(r.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
-		f.Abort("load hosts: ", err)
+		f.Abort(def.ErrLoadHosts, err)
 	}
 
 	if name == "" {
@@ -176,7 +180,7 @@ func (r *Relay) Doctor(configPath, name string, opts ProbeOptions) bool {
 	healthy := true
 	for _, site := range sites {
 		rep := &doctorReport{Agent: name, Side: "client side, host " + site.HostName}
-		f.Infof("%s — %s", name, rep.Side)
+		f.Infof(fmtDoctorHeader, name, rep.Side)
 		r.doctorClient(f, rep, site, global, opts)
 		rep.print(f)
 		if rep.failed() {
@@ -185,7 +189,7 @@ func (r *Relay) Doctor(configPath, name string, opts ProbeOptions) bool {
 	}
 	if liveAgent != nil {
 		rep := &doctorReport{Agent: name, Side: "server side, relay " + server.Domain}
-		f.Infof("%s — %s", name, rep.Side)
+		f.Infof(fmtDoctorHeader, name, rep.Side)
 		r.doctorServer(f, rep, server, liveAgent, opts)
 		rep.print(f)
 		if rep.failed() {
@@ -248,23 +252,23 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 		detail += ", sni " + site.LocalSNI
 	}
 	if len(site.Exposes) == 0 {
-		rep.add("configuration", doctorFail, "agent has no expose blocks in any route", "add an expose block with via = \""+site.Agent.Name+"\"")
+		rep.add(stageConfiguration, doctorFail, "agent has no expose blocks in any route", "add an expose block with via = \""+site.Agent.Name+"\"")
 	} else {
-		rep.add("configuration", doctorPass, detail)
+		rep.add(stageConfiguration, doctorPass, detail)
 	}
 
 	// relay URL and enrollment secret
 	relayURL, err := url.Parse(site.Agent.Relay)
 	if err != nil || relayURL.Hostname() == "" {
-		rep.add("relay URL", doctorFail, "invalid relay URL: "+site.Agent.Relay)
+		rep.add(stageRelayURL, doctorFail, "invalid relay URL: "+site.Agent.Relay)
 		return
 	}
 	port := relayURL.Port()
 	if port == "" {
-		port = "443"
+		port = def.RelayDefaultPort
 	}
 	hostport := net.JoinHostPort(relayURL.Hostname(), port)
-	rep.add("relay URL", doctorPass, hostport)
+	rep.add(stageRelayURL, doctorPass, hostport)
 
 	raw := strings.TrimSpace(string(site.Agent.Token))
 	if raw == "" {
@@ -272,31 +276,31 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 	}
 	secret, secretErr := secretValue(raw, global)
 	if secretErr != nil {
-		rep.add("enrollment", doctorFail, secretErr.Error(), "check the agent's enroll/token reference and Keeper")
+		rep.add(stageEnrollment, doctorFail, secretErr.Error(), "check the agent's enroll/token reference and Keeper")
 	} else {
-		rep.add("enrollment", doctorPass, "enrollment secret resolves")
+		rep.add(stageEnrollment, doctorPass, "enrollment secret resolves")
 	}
 
 	// DNS
 	addrs, dnsErr := net.LookupHost(relayURL.Hostname())
 	if dnsErr != nil {
-		rep.add("dns", doctorFail, dnsErr.Error(), "check the relay hostname resolves on this host")
+		rep.add(stageDNS, doctorFail, dnsErr.Error(), "check the relay hostname resolves on this host")
 	} else {
-		rep.add("dns", doctorPass, strings.Join(addrs, ", "))
+		rep.add(stageDNS, doctorPass, strings.Join(addrs, ", "))
 	}
 
 	// TLS
 	if info, err := probeTLS(hostport, relayURL.Hostname(), site.Agent.Insecure, opts.Timeout); err != nil {
-		rep.add("tls", doctorFail, err.Error(), "check the certificate, SNI and that port "+port+" is open")
+		rep.add(stageTLS, doctorFail, err.Error(), "check the certificate, SNI and that port "+port+" is open")
 	} else {
 		left := time.Until(info.NotAfter)
 		switch {
 		case left < 0:
-			rep.add("tls", doctorFail, "certificate expired "+info.NotAfter.Format(time.RFC3339), "renew the relay certificate")
-		case left < 14*24*time.Hour:
-			rep.add("tls", doctorWarn, fmt.Sprintf("certificate for %s expires in %s", info.Subject, humanLeft(left)))
+			rep.add(stageTLS, doctorFail, "certificate expired "+info.NotAfter.Format(time.RFC3339), "renew the relay certificate")
+		case left < def.RelayCertWarnBefore:
+			rep.add(stageTLS, doctorWarn, fmt.Sprintf("certificate for %s expires in %s", info.Subject, humanLeft(left)))
 		default:
-			rep.add("tls", doctorPass, fmt.Sprintf("%s, issuer %s, expires in %s", info.Subject, info.Issuer, humanLeft(left)))
+			rep.add(stageTLS, doctorPass, fmt.Sprintf("%s, issuer %s, expires in %s", info.Subject, info.Issuer, humanLeft(left)))
 		}
 	}
 
@@ -305,18 +309,18 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 	authOK := false
 	var session *relayhub.SessionReport
 	if secret != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), def.RelayAuthTimeout)
 		report, err := relayhub.ProbeSession(ctx, site.Agent.Relay, site.Agent.Name, secret, "", site.Agent.Insecure)
 		cancel()
 		if err != nil {
-			rep.add("authentication", doctorFail, err.Error(), "verify the enrollment token on the relay and that the agent is not revoked")
+			rep.add(stageAuth, doctorFail, err.Error(), "verify the enrollment token on the relay and that the agent is not revoked")
 		} else {
 			authOK = true
 			session = report
-			rep.add("authentication", doctorPass, "relay accepted the credential")
+			rep.add(stageAuth, doctorPass, "relay accepted the credential")
 		}
 	} else {
-		rep.add("authentication", doctorSkip, "no enrollment secret available")
+		rep.add(stageAuth, doctorSkip, "no enrollment secret available")
 	}
 
 	// processes and session: is exactly one agent running, and does the relay
@@ -340,13 +344,13 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 	base, err := url.Parse(site.LocalURL)
 	var local httpProbe
 	if err != nil || base.Host == "" {
-		rep.add("local target", doctorFail, "invalid local target: "+site.LocalURL)
+		rep.add(stageLocalTarget, doctorFail, "invalid local target: "+site.LocalURL)
 	} else {
 		local = probeOnce(site.LocalURL, localHost, localHost, site.LocalInsecure, opts.Timeout)
 		if local.reached() {
-			rep.add("local target", doctorPass, local.brief()+" "+site.LocalURL)
+			rep.add(stageLocalTarget, doctorPass, local.brief()+" "+site.LocalURL)
 		} else {
-			rep.add("local target", doctorFail, local.summary(), "start the local agbero and confirm "+site.LocalURL+" answers")
+			rep.add(stageLocalTarget, doctorFail, local.summary(), "start the local agbero and confirm "+site.LocalURL+" answers")
 		}
 	}
 
@@ -358,11 +362,11 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 		publicPath := "/" + ex.ID
 		publicURL, err := publicExposeURL(site.Agent.Relay, publicPath)
 		if err != nil {
-			rep.add("public "+publicPath, doctorFail, err.Error())
+			rep.add(stagePublic+" "+publicPath, doctorFail, err.Error())
 			continue
 		}
 		if !authOK {
-			rep.add("public "+publicPath, doctorSkip, "skipped: relay authentication failed")
+			rep.add(stagePublic+" "+publicPath, doctorSkip, "skipped: relay authentication failed")
 			continue
 		}
 		var l httpProbe
@@ -375,7 +379,7 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 		if session != nil {
 			probeStart = session.Now
 		}
-		pub, history := probeWithRetry(f, "public", publicURL, "", false, opts)
+		pub, history := probeWithRetry(f, stagePublic, publicURL, "", false, opts)
 		v := diagnoseClient(l, pub, history, ex.ID, site.LocalURL)
 		if session != nil && (!v.OK || v.Flap) {
 			// The relay recorded the exact error behind each 502 it served for
@@ -391,13 +395,13 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 		}
 		switch {
 		case v.OK && !v.Flap:
-			rep.add("public "+publicPath, doctorPass, pub.brief()+", payload matched")
+			rep.add(stagePublic+" "+publicPath, doctorPass, pub.brief()+", payload matched")
 		case v.Flap:
-			rep.add("public "+publicPath, doctorFail,
+			rep.add(stagePublic+" "+publicPath, doctorFail,
 				fmt.Sprintf("flapped: %s in %s — the path is not stable", attemptStatuses(history), pub.Took.Round(time.Millisecond)),
 				v.Actions...)
 		default:
-			rep.add("public "+publicPath, doctorFail, v.Summary, v.Actions...)
+			rep.add(stagePublic+" "+publicPath, doctorFail, v.Summary, v.Actions...)
 		}
 	}
 
@@ -405,18 +409,18 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 	// protocol exchange, so it is reported as skipped.
 	for _, ex := range site.Exposes {
 		if ex.TCP != nil && ex.TCP.Local != "" {
-			conn, err := net.DialTimeout("tcp", ex.TCP.Local, opts.Timeout)
+			conn, err := net.DialTimeout(def.TCP, ex.TCP.Local, opts.Timeout)
 			if err != nil {
-				rep.add(fmt.Sprintf("tcp %d", ex.TCP.PublicPort), doctorFail,
+				rep.add(fmt.Sprintf(fmtTCPPort, ex.TCP.PublicPort), doctorFail,
 					fmt.Sprintf("local target %s: %v", ex.TCP.Local, err),
 					"start the local service and check the expose's tcp.local")
 				continue
 			}
 			_ = conn.Close()
-			rep.add(fmt.Sprintf("tcp %d", ex.TCP.PublicPort), doctorPass, "local target "+ex.TCP.Local+" accepts connections")
+			rep.add(fmt.Sprintf(fmtTCPPort, ex.TCP.PublicPort), doctorPass, "local target "+ex.TCP.Local+" accepts connections")
 		}
 		if ex.UDP != nil {
-			rep.add(fmt.Sprintf("udp %d", ex.UDP.PublicPort), doctorSkip, "UDP has no handshake to probe")
+			rep.add(fmt.Sprintf(fmtUDPPort, ex.UDP.PublicPort), doctorSkip, "UDP has no handshake to probe")
 		}
 	}
 
@@ -437,10 +441,10 @@ func (r *Relay) doctorClient(f *ui.Flow, rep *doctorReport, site agentSite, glob
 func (r *Relay) doctorServer(f *ui.Flow, rep *doctorReport, server *relayhub.ServerSnapshot, agent *relayhub.AgentSnapshot, opts ProbeOptions) {
 	detail := fmt.Sprintf("connected %s, streams %d", age(agent.ConnectedAt), agent.Streams)
 	if agent.Reconnects > 0 {
-		rep.add("session", doctorWarn, fmt.Sprintf("%s, reconnects %d", detail, agent.Reconnects),
+		rep.add(stageSession, doctorWarn, fmt.Sprintf("%s, reconnects %d", detail, agent.Reconnects),
 			"a rising reconnect count means the control connection is being replaced; check the network path and the relay/agent versions")
 	} else {
-		rep.add("session", doctorPass, detail+", no reconnects")
+		rep.add(stageSession, doctorPass, detail+", no reconnects")
 	}
 	if agent.LastError != "" {
 		rep.add("last error", doctorWarn, agent.LastError+" ("+age(agent.LastErrorAt)+")")
@@ -483,7 +487,7 @@ func (r *Relay) doctorServer(f *ui.Flow, rep *doctorReport, server *relayhub.Ser
 			rep.add("route "+rt.Key, doctorFail, err.Error())
 			continue
 		}
-		pub, history := probeWithRetry(f, "public", target.String(), "", false, opts)
+		pub, history := probeWithRetry(f, stagePublic, target.String(), "", false, opts)
 		if pub.ok() && !flapped(history) {
 			rep.add("route "+rt.Key, doctorPass, fmt.Sprintf("live, %s", pub.brief()))
 			continue
@@ -505,11 +509,11 @@ func (r *Relay) doctorServer(f *ui.Flow, rep *doctorReport, server *relayhub.Ser
 				status = doctorFail
 				detail = fmt.Sprintf("tcp :%d is not listening", ex.TCPPort)
 			}
-			rep.add(fmt.Sprintf("tcp %d", ex.TCPPort), status, detail,
+			rep.add(fmt.Sprintf(fmtTCPPort, ex.TCPPort), status, detail,
 				"check allow_tcp_ports and whether the port is already in use")
 		}
 		if ex.UDPPort > 0 {
-			rep.add(fmt.Sprintf("udp %d", ex.UDPPort), doctorSkip, "udp listener is reported by the relay but not probed")
+			rep.add(fmt.Sprintf(fmtUDPPort, ex.UDPPort), doctorSkip, "udp listener is reported by the relay but not probed")
 		}
 	}
 }
@@ -537,7 +541,7 @@ type tlsProbeInfo struct {
 
 func probeTLS(hostport, sni string, insecure bool, timeout time.Duration) (tlsProbeInfo, error) {
 	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", hostport, &tls.Config{
+	conn, err := tls.DialWithDialer(dialer, def.TCP, hostport, &tls.Config{
 		ServerName:         sni,
 		InsecureSkipVerify: insecure,
 		MinVersion:         tls.VersionTLS12,
@@ -545,7 +549,7 @@ func probeTLS(hostport, sni string, insecure bool, timeout time.Duration) (tlsPr
 	if err != nil {
 		return tlsProbeInfo{}, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	st := conn.ConnectionState()
 	info := tlsProbeInfo{Version: st.Version}
 	if len(st.PeerCertificates) > 0 {
@@ -565,14 +569,14 @@ func secretValue(raw string, global *alaye.Global) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("no enrollment token or credential is configured")
 	}
-	if !strings.HasPrefix(raw, "ss://") {
+	if !strings.HasPrefix(raw, def.SecretScheme) {
 		return raw, nil
 	}
 	client, err := secrets.NewControlClient(global.Storage.DataDir)
 	if err != nil {
 		return "", fmt.Errorf("Keeper reference %s is not reachable: %w", raw, err)
 	}
-	key := strings.TrimPrefix(raw, "ss://")
+	key := strings.TrimPrefix(raw, def.SecretScheme)
 	value, err := client.Get(key)
 	if err != nil || value == "" {
 		return "", fmt.Errorf("Keeper key %s is missing", key)

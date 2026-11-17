@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/hashicorp/yamux"
 	"github.com/olekukonko/ll"
 )
@@ -47,7 +48,7 @@ type Client struct {
 // NewClient constructs a local relay agent.
 func NewClient(cfg ClientConfig) *Client {
 	if cfg.Logger == nil {
-		cfg.Logger = ll.New("relay-agent").Disable()
+		cfg.Logger = ll.New(def.RelayAgentNamespace).Disable()
 	}
 	if cfg.Pool <= 0 {
 		cfg.Pool = 8
@@ -56,12 +57,12 @@ func NewClient(cfg ClientConfig) *Client {
 	for _, ex := range cfg.Exposes {
 		exposes[ex.ID] = ex
 	}
-	return &Client{cfg: cfg, logger: cfg.Logger.Namespace("relay-agent"), exposes: exposes}
+	return &Client{cfg: cfg, logger: cfg.Logger.Namespace(def.RelayAgentNamespace), exposes: exposes}
 }
 
 // Run connects and reconnects until ctx is cancelled.
 func (c *Client) Run(ctx context.Context) {
-	backoff := time.Second
+	backoff := def.RelayReconnectBase
 	for {
 		select {
 		case <-ctx.Done():
@@ -76,17 +77,17 @@ func (c *Client) Run(ctx context.Context) {
 		if c.connects.Load() != before {
 			// The session was established, so the next attempt should start
 			// from the shortest delay instead of the largest one.
-			backoff = time.Second
+			backoff = def.RelayReconnectBase
 		}
 		if err != nil {
-			c.logger.Fields("agent", c.cfg.Agent, "err", err).Warn("relay connection failed")
+			c.logger.Fields(def.FieldAgent, c.cfg.Agent, def.FieldErr, err).Warn("relay connection failed")
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
 		}
-		if backoff < 30*time.Second {
+		if backoff < def.RelayReconnectMax {
 			backoff *= 2
 		}
 	}
@@ -95,18 +96,18 @@ func (c *Client) Run(ctx context.Context) {
 func (c *Client) runOnce(ctx context.Context) error {
 	u, err := url.Parse(c.cfg.Relay)
 	if err != nil || u.Host == "" {
-		return fmt.Errorf("invalid relay URL")
+		return fmt.Errorf(def.ErrRelayURL)
 	}
 	host := u.Host
 	if !strings.Contains(host, ":") {
-		host += ":443"
+		host += ":" + def.RelayDefaultPort
 	}
 	dialer := &tls.Dialer{Config: &tls.Config{
 		ServerName:         u.Hostname(),
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: c.cfg.Insecure,
 	}}
-	raw, err := dialer.DialContext(ctx, "tcp", host)
+	raw, err := dialer.DialContext(ctx, def.TCP, host)
 	if err != nil {
 		return err
 	}
@@ -119,14 +120,14 @@ func (c *Client) runOnce(ctx context.Context) error {
 		_ = raw.Close()
 		return err
 	}
-	defer mux.Close()
+	defer func() { _ = mux.Close() }()
 
 	control, err := mux.OpenStream()
 	if err != nil {
 		return err
 	}
-	defer control.Close()
-	_ = control.SetDeadline(time.Now().Add(15 * time.Second))
+	defer func() { _ = control.Close() }()
+	_ = control.SetDeadline(time.Now().Add(def.RelayHandshakeTimeout))
 	credential := c.credential
 	if credential == "" {
 		credential = c.cfg.Token
@@ -184,7 +185,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 	}
 	_ = control.SetDeadline(time.Time{})
 	c.connects.Add(1)
-	c.logger.Fields("agent", c.cfg.Agent, "relay", c.cfg.Relay).Info("relay agent connected")
+	c.logger.Fields(def.FieldAgent, c.cfg.Agent, def.FieldRelay, c.cfg.Relay).Info("relay agent connected")
 
 	dataCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -194,12 +195,12 @@ func (c *Client) runOnce(ctx context.Context) error {
 		for {
 			var f ack
 			if err := readFrame(control, &f); err != nil {
-				c.logger.Fields("agent", c.cfg.Agent, "reason", err.Error()).Warn("relay control connection closed")
+				c.logger.Fields(def.FieldAgent, c.cfg.Agent, def.FieldReason, err.Error()).Warn(def.MsgControlClosed)
 				cancel()
 				return
 			}
 			if f.Error != "" {
-				c.logger.Fields("agent", c.cfg.Agent, "reason", f.Error).Warn("relay control connection closed")
+				c.logger.Fields(def.FieldAgent, c.cfg.Agent, def.FieldReason, f.Error).Warn(def.MsgControlClosed)
 				cancel()
 				return
 			}
@@ -240,8 +241,8 @@ func (c *Client) acceptLoop(ctx context.Context, mux *yamux.Session) {
 			return
 		}
 		go func() {
-			defer stream.Close()
-			_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+			defer func() { _ = stream.Close() }()
+			_ = stream.SetReadDeadline(time.Now().Add(def.RelayHandshakeTimeout))
 			var h workHello
 			if err := readFrame(stream, &h); err != nil {
 				c.workFailed("", "read work header", err)
@@ -265,12 +266,12 @@ func (c *Client) handleWork(ctx context.Context, stream net.Conn, h workHello) {
 	}
 	switch {
 	case known && ex.TCP != nil && ex.TCP.Local != "":
-		local, err := (&net.Dialer{}).DialContext(ctx, "tcp", ex.TCP.Local)
+		local, err := (&net.Dialer{}).DialContext(ctx, def.TCP, ex.TCP.Local)
 		if err != nil {
 			c.workFailed(h.Expose, "dial tcp target "+ex.TCP.Local, err)
 			return
 		}
-		defer local.Close()
+		defer func() { _ = local.Close() }()
 		joinConns(local, stream)
 	case known && ex.UDP != nil && ex.UDP.Local != "":
 		c.runUDP(ctx, stream, ex.UDP.Local)
@@ -282,7 +283,7 @@ func (c *Client) handleWork(ctx context.Context, stream net.Conn, h workHello) {
 // serveHTTP dials the local target lazily: the relay has already written the
 // HTTP request to the stream, so the local connection is never idle.
 func (c *Client) serveHTTP(ctx context.Context, stream net.Conn) {
-	buf := make([]byte, 32<<10)
+	buf := make([]byte, def.RelayCopyBufferBytes)
 	n, err := stream.Read(buf)
 	if n == 0 && err != nil {
 		return
@@ -296,7 +297,7 @@ func (c *Client) serveHTTP(ctx context.Context, stream net.Conn) {
 		c.workFailed("", "dial local target "+c.cfg.Local, err)
 		return
 	}
-	defer local.Close()
+	defer func() { _ = local.Close() }()
 	if _, err := local.Write(buf[:n]); err != nil {
 		c.workFailed("", "write to local target", err)
 		return
@@ -308,15 +309,15 @@ func (c *Client) serveHTTP(ctx context.Context, stream net.Conn) {
 // sees these as a bare EOF and answers 502, so this line is the only place the
 // cause is visible.
 func (c *Client) workFailed(expose, stage string, err error) {
-	c.logger.Fields("agent", c.cfg.Agent, "expose", expose, "stage", stage, "err", err).Warn("relay work stream failed")
+	c.logger.Fields(def.FieldAgent, c.cfg.Agent, def.FieldExpose, expose, def.FieldStage, stage, def.FieldErr, err).Warn("relay work stream failed")
 }
 
 func (c *Client) runUDP(ctx context.Context, stream net.Conn, localAddr string) {
-	local, err := net.Dial("udp", localAddr)
+	local, err := net.Dial(def.UDP, localAddr)
 	if err != nil {
 		return
 	}
-	defer local.Close()
+	defer func() { _ = local.Close() }()
 	for {
 		payload, err := readDatagram(stream)
 		if err != nil {
@@ -325,8 +326,8 @@ func (c *Client) runUDP(ctx context.Context, stream net.Conn, localAddr string) 
 		if _, err := local.Write(payload); err != nil {
 			return
 		}
-		_ = local.SetReadDeadline(time.Now().Add(5 * time.Second))
-		buf := make([]byte, 65535)
+		_ = local.SetReadDeadline(time.Now().Add(def.RelayUDPReadTimeout))
+		buf := make([]byte, def.RelayUDPBufferBytes)
 		n, err := local.Read(buf)
 		if err != nil {
 			return
@@ -351,7 +352,7 @@ func joinConns(a, b net.Conn) {
 
 func isHTTPTarget(addr string) bool {
 	lower := strings.ToLower(addr)
-	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+	return strings.HasPrefix(lower, def.Http+"://") || strings.HasPrefix(lower, def.Https+"://")
 }
 
 // dialLocal connects to the agent's local target.
@@ -367,9 +368,9 @@ func (c *Client) dialLocal(ctx context.Context, localAddr string) (net.Conn, err
 		secure = local.Scheme == "https"
 		if !strings.Contains(targetAddr, ":") {
 			if secure {
-				targetAddr += ":443"
+				targetAddr += ":" + def.RelayHTTPSPort
 			} else {
-				targetAddr += ":80"
+				targetAddr += ":" + def.RelayHTTPPort
 			}
 		}
 	}
@@ -383,9 +384,9 @@ func (c *Client) dialLocal(ctx context.Context, localAddr string) (net.Conn, err
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: c.cfg.LocalInsecure,
 		}}
-		return d.DialContext(ctx, "tcp", targetAddr)
+		return d.DialContext(ctx, def.TCP, targetAddr)
 	}
-	return (&net.Dialer{}).DialContext(ctx, "tcp", targetAddr)
+	return (&net.Dialer{}).DialContext(ctx, def.TCP, targetAddr)
 }
 
 func regFromExposes(exposes []alaye.Expose) registration {

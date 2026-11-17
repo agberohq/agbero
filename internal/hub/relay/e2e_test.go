@@ -95,7 +95,7 @@ func burst(t *testing.T, srv *Server, n int) {
 // address. The agent must re-authenticate and the exposure must come back.
 func TestAgentSurvivesRelayRestart(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "ok")
+		_, _ = fmt.Fprint(w, "ok")
 	}))
 	defer local.Close()
 
@@ -108,7 +108,7 @@ func TestAgentSurvivesRelayRestart(t *testing.T) {
 	_ = srv.Close()
 
 	next := startRelay(t, addr)
-	defer next.Close()
+	defer func() { _ = next.Close() }()
 	waitServed(t, next, "/show", "ok")
 	burst(t, next, 10)
 
@@ -122,7 +122,7 @@ func TestAgentSurvivesRelayRestart(t *testing.T) {
 // the relay is back, without accumulating dead routes.
 func TestAgentSurvivesRepeatedRelayRestarts(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "ok")
+		_, _ = fmt.Fprint(w, "ok")
 	}))
 	defer local.Close()
 
@@ -139,12 +139,12 @@ func TestAgentSurvivesRepeatedRelayRestarts(t *testing.T) {
 		waitServed(t, srv, "/show", "ok")
 		burst(t, srv, 5)
 	}
-	srv.Close()
+	_ = srv.Close()
 
 	// A final restart must still produce exactly one live route, not one per
 	// reconnect.
 	final := startRelay(t, addr)
-	defer final.Close()
+	defer func() { _ = final.Close() }()
 	waitServed(t, final, "/show", "ok")
 	burst(t, final, 10)
 	snap := final.Snapshot()
@@ -158,13 +158,13 @@ func TestAgentSurvivesRepeatedRelayRestarts(t *testing.T) {
 func TestAgentHandlesConcurrentRequests(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(20 * time.Millisecond)
-		fmt.Fprint(w, "ok")
+		_, _ = fmt.Fprint(w, "ok")
 	}))
 	defer local.Close()
 
 	addr := freeAddr(t)
 	srv := startRelay(t, addr)
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	cancel, _ := startAgent(t, addr, local.URL, "alice", 4)
 	defer cancel()
 	waitServed(t, srv, "/show", "ok")
@@ -206,13 +206,13 @@ func TestRelayStreamsRequestBody(t *testing.T) {
 			return
 		}
 		gotSum := sha256.Sum256(got)
-		fmt.Fprintf(w, "%d %s", len(got), hex.EncodeToString(gotSum[:]))
+		_, _ = fmt.Fprintf(w, "%d %s", len(got), hex.EncodeToString(gotSum[:]))
 	}))
 	defer local.Close()
 
 	addr := freeAddr(t)
 	srv := startRelay(t, addr)
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	cancel, _ := startAgent(t, addr, local.URL, "alice", 2)
 	defer cancel()
 	waitServed(t, srv, "/show", "")
@@ -240,7 +240,7 @@ func TestRelayStreamsResponseChunks(t *testing.T) {
 			return
 		}
 		for i := 0; i < 8; i++ {
-			fmt.Fprintf(w, "chunk-%d;", i)
+			_, _ = fmt.Fprintf(w, "chunk-%d;", i)
 			fl.Flush()
 			time.Sleep(5 * time.Millisecond)
 		}
@@ -249,7 +249,7 @@ func TestRelayStreamsResponseChunks(t *testing.T) {
 
 	addr := freeAddr(t)
 	srv := startRelay(t, addr)
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	cancel, _ := startAgent(t, addr, local.URL, "alice", 2)
 	defer cancel()
 	waitServed(t, srv, "/show", "")
@@ -263,7 +263,7 @@ func TestRelayStreamsResponseChunks(t *testing.T) {
 	}
 	var want strings.Builder
 	for i := 0; i < 8; i++ {
-		fmt.Fprintf(&want, "chunk-%d;", i)
+		_, _ = fmt.Fprintf(&want, "chunk-%d;", i)
 	}
 	if got := rr.Body.String(); got != want.String() {
 		t.Fatalf("body = %q, want %q", got, want.String())
@@ -281,7 +281,7 @@ func TestHeartbeatPingDoesNotDropRoutes(t *testing.T) {
 	srv.agents = newAgentStore(nil)
 
 	serverConn, clientConn := net.Pipe()
-	defer clientConn.Close()
+	defer func() { _ = clientConn.Close() }()
 
 	reg := registration{Exposes: []registeredExpose{{ID: "show", Path: true}}}
 	done := make(chan struct{})
@@ -327,7 +327,7 @@ func TestHeartbeatPingDoesNotDropRoutes(t *testing.T) {
 // and every request after the idle period must still be served.
 func TestAgentSessionStaysIdleWithAgberoTarget(t *testing.T) {
 	local := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "ok")
+		_, _ = fmt.Fprint(w, "ok")
 	}))
 	local.Config.ReadHeaderTimeout = time.Second
 	local.StartTLS()
@@ -335,7 +335,7 @@ func TestAgentSessionStaysIdleWithAgberoTarget(t *testing.T) {
 
 	addr := freeAddr(t)
 	srv := startRelay(t, addr)
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	cancel, _ := startAgent(t, addr, local.URL, "alice", 8)
 	defer cancel()
 	waitServed(t, srv, "/show", "ok")
@@ -362,13 +362,13 @@ func TestAgentSessionStaysIdleWithAgberoTarget(t *testing.T) {
 func TestLegacyAgentGetsUpgradeError(t *testing.T) {
 	addr := freeAddr(t)
 	srv := startRelay(t, addr)
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := writeFrame(conn, hello{Kind: frameControl, Agent: "alice", EnrollToken: "enroll-secret"}); err != nil {
 		t.Fatal(err)
 	}

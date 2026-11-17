@@ -14,14 +14,38 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	relayhub "github.com/agberohq/agbero/internal/hub/relay"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 )
 
-// checkProbeMaxBody bounds how much of a response body the check reads.
-const checkProbeMaxBody = 64 << 10
+// Labels shared by the check and doctor reports.
+const (
+	relayAppOrTunnel = "relay or local application"
+	stagePublic      = "public"
+	stageSession     = "session"
+	fmtServed        = "%s served HTTP %d in %s"
+	fmtBytes         = " (%d B)"
+	fmtDoctorHeader  = "%s — %s"
+	stageLocalTarget = "local target"
+	stageEnrollment  = "enrollment"
+	stageAuth        = "authentication"
+	stateLive        = "live"
+	stateUnknown     = "unknown"
+
+	fmtTCPPort          = "tcp %d"
+	fmtUDPPort          = "udp %d"
+	stageConfiguration  = "configuration"
+	stageDNS            = "dns"
+	stageProcesses      = "processes"
+	stageTLS            = "tls"
+	wherePublicEndpoint = "public endpoint (DNS, TLS or reachability)"
+	whereStaleRoute     = "stale route (reconnect race)"
+	actionRestartAgent  = "restarting the agent rebuilds the route"
+	actionRelayLog      = "relay access log for the same path and x-request-id"
+)
 
 // ProbeOptions controls how the public leg is probed.
 type ProbeOptions struct {
@@ -35,13 +59,13 @@ type ProbeOptions struct {
 
 func (o ProbeOptions) normalize() ProbeOptions {
 	if o.Attempts <= 0 {
-		o.Attempts = 4
+		o.Attempts = def.RelayCheckAttempts
 	}
 	if o.Wait <= 0 {
-		o.Wait = time.Second
+		o.Wait = def.RelayCheckWait
 	}
 	if o.Timeout <= 0 {
-		o.Timeout = 5 * time.Second
+		o.Timeout = def.RelayCheckTimeout
 	}
 	return o
 }
@@ -63,22 +87,22 @@ func (r *Relay) Check(configPath, target string, server, client bool, opts Probe
 	}
 	global, err := LoadGlobal(configPath)
 	if err != nil {
-		f.Abort("load config: ", err)
+		f.Abort(def.ErrLoadConfig, err)
 	}
 	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(r.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
-		f.Abort("load hosts: ", err)
+		f.Abort(def.ErrLoadHosts, err)
 	}
 
 	var public *url.URL
-	if strings.Contains(target, "://") {
+	if strings.Contains(target, def.ProtocolSeparator) {
 		public, err = url.Parse(target)
 		if err != nil || public.Host == "" {
 			f.Abort("invalid target URL")
 		}
 	} else {
-		public = &url.URL{Scheme: "https", Host: target, Path: "/"}
+		public = &url.URL{Scheme: def.Https, Host: target, Path: "/"}
 	}
 	host := public.Hostname()
 	if public.Path == "" {
@@ -129,7 +153,7 @@ func (r *Relay) checkClient(f *ui.Flow, hosts map[string]*alaye.Host, host, path
 			healthy = false
 		}
 		if ok {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), def.RelayAuthTimeout)
 			err := relayhub.ProbeAuth(ctx, a.Relay, a.Name, enrollValue, "", a.Insecure)
 			cancel()
 			if err != nil {
@@ -199,7 +223,7 @@ func (r *Relay) checkClient(f *ui.Flow, hosts map[string]*alaye.Host, host, path
 				healthy = false
 				continue
 			}
-			public, history := probeWithRetry(f, "public", publicURL, "", false, opts)
+			public, history := probeWithRetry(f, stagePublic, publicURL, "", false, opts)
 			v := diagnoseClient(local, public, history, ex.ID, localTarget)
 			v.print(f)
 			if !v.OK || v.Flap {
@@ -233,7 +257,7 @@ func (r *Relay) checkServer(f *ui.Flow, hosts map[string]*alaye.Host, public *ur
 	healthy := true
 	for _, relay := range hcfg.Relays {
 		f.Done("%s", "relay configured: "+relay.Name)
-		if relay.Auth.Method == "enrollment" {
+		if relay.Auth.Method == def.AuthMethodEnrollment {
 			if checkSecret(r, f, "relay enrollment", strings.TrimSpace(string(relay.Auth.Token)), global) {
 				f.Done("relay enrollment token resolves")
 			} else {
@@ -254,7 +278,7 @@ func (r *Relay) checkServer(f *ui.Flow, hosts map[string]*alaye.Host, public *ur
 		printRelayState(f, live)
 	}
 
-	probe, history := probeWithRetry(f, "public", public.String(), "", false, opts)
+	probe, history := probeWithRetry(f, stagePublic, public.String(), "", false, opts)
 	v := diagnoseServer(probe, history, live, public)
 	v.print(f)
 	if !v.OK || v.Flap {
@@ -292,7 +316,7 @@ func publicExposeURL(relayURL, path string) (string, error) {
 	if err != nil || u.Hostname() == "" {
 		return "", fmt.Errorf("invalid relay URL")
 	}
-	return "https://" + u.Hostname() + path, nil
+	return def.Https + def.ProtocolSeparator + u.Hostname() + path, nil
 }
 
 // httpProbe is one HTTP request made by the check.
@@ -342,7 +366,7 @@ func (p httpProbe) summary() string {
 func (p httpProbe) describe() string {
 	s := p.summary()
 	if len(p.Body) > 0 {
-		s += fmt.Sprintf(" (%d B)", len(p.Body))
+		s += fmt.Sprintf(fmtBytes, len(p.Body))
 	}
 	return s
 }
@@ -354,7 +378,7 @@ func (p httpProbe) brief() string {
 	}
 	s := fmt.Sprintf("HTTP %d in %s", p.Status, p.Took.Round(time.Millisecond))
 	if len(p.Body) > 0 {
-		s += fmt.Sprintf(" (%d B)", len(p.Body))
+		s += fmt.Sprintf(fmtBytes, len(p.Body))
 	}
 	return s
 }
@@ -386,8 +410,8 @@ func probeOnce(raw, host, sni string, insecure bool, timeout time.Duration) http
 	if err != nil {
 		return httpProbe{URL: raw, Took: time.Since(start), Err: err}
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, checkProbeMaxBody))
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, def.RelayCheckBodyBytes))
 	return httpProbe{URL: raw, Status: resp.StatusCode, Header: resp.Header.Clone(), Body: body, Took: time.Since(start)}
 }
 
@@ -426,8 +450,8 @@ func probeWithRetry(f *ui.Flow, label, raw, host string, insecure bool, opts Pro
 		time.Sleep(wait)
 		history[len(history)-1].Wait = wait
 		wait *= 2
-		if wait > 8*time.Second {
-			wait = 8 * time.Second
+		if wait > def.RelayCheckMaxWait {
+			wait = def.RelayCheckMaxWait
 		}
 	}
 	return history[len(history)-1].Probe, history
@@ -523,7 +547,7 @@ func diagnoseClient(local, public httpProbe, history []probeAttempt, exposeID, l
 	v.Detail = append(v.Detail, "local control: "+local.describe()+" "+localTarget)
 	if public.Err != nil {
 		v.Summary = "public request failed: " + public.Err.Error()
-		v.Where = "public endpoint (DNS, TLS or reachability)"
+		v.Where = wherePublicEndpoint
 		v.Actions = []string{
 			"resolve the relay hostname and confirm port 443 completes a TLS handshake",
 			"from this host: curl -v " + public.URL,
@@ -538,7 +562,7 @@ func diagnoseClient(local, public httpProbe, history []probeAttempt, exposeID, l
 	switch {
 	case public.ok():
 		v.OK = true
-		v.Summary = fmt.Sprintf("%s served HTTP %d in %s", public.URL, public.Status, public.Took.Round(time.Millisecond))
+		v.Summary = fmt.Sprintf(fmtServed, public.URL, public.Status, public.Took.Round(time.Millisecond))
 		if local.reached() && len(local.Body) > 0 && len(public.Body) == len(local.Body) {
 			v.Detail = append(v.Detail, fmt.Sprintf("payload verified end to end: %d bytes match the local target", len(public.Body)))
 		} else if local.reached() && len(public.Body) > 0 {
@@ -547,7 +571,7 @@ func diagnoseClient(local, public httpProbe, history []probeAttempt, exposeID, l
 		if v.Flap {
 			v.OK = false
 			v.Summary = "public path flapped but recovered: " + public.summary()
-			v.Where = "relay → agent stream (transient)"
+			v.Where = "relay → agent tunnel (transient)"
 			v.Actions = []string{
 				"agent log on this host: a 'relay work stream failed' line at the attempt time means the agent closed the stream; no line means the request never reached the agent",
 				"the session stage of this doctor (needs the relay redeployed with this build) shows reconnects, replacements and the relay's exact error",
@@ -590,8 +614,8 @@ func diagnoseClient(local, public httpProbe, history []probeAttempt, exposeID, l
 		v.Actions = []string{"check the local route's redirect settings, or use the redirect target as the check target"}
 	default:
 		v.Summary = "unexpected public response: " + public.summary()
-		v.Where = "relay or local application"
-		v.Actions = []string{"compare with the local control probe above", "relay access log for the same path and x-request-id"}
+		v.Where = relayAppOrTunnel
+		v.Actions = []string{"compare with the local control probe above", actionRelayLog}
 	}
 	if !v.OK {
 		v.Summary += " (" + attemptsNote(history) + ")"
@@ -607,7 +631,7 @@ func diagnoseServer(public httpProbe, history []probeAttempt, live *relayhub.Ser
 	route := routeForPath(live, target.Path)
 	if public.Err != nil {
 		v.Summary = "public request failed: " + public.Err.Error()
-		v.Where = "public endpoint (DNS, TLS or reachability)"
+		v.Where = wherePublicEndpoint
 		v.Actions = []string{"curl -v " + target.String() + " from this host"}
 		return v
 	}
@@ -616,7 +640,7 @@ func diagnoseServer(public httpProbe, history []probeAttempt, live *relayhub.Ser
 		v.Detail = append(v.Detail, "x-request-id: "+id)
 	}
 	if route != nil {
-		state := "live"
+		state := stateLive
 		if !route.Live {
 			state = "dead (bound to a closed session)"
 		}
@@ -626,7 +650,7 @@ func diagnoseServer(public httpProbe, history []probeAttempt, live *relayhub.Ser
 	switch {
 	case public.ok():
 		v.OK = true
-		v.Summary = fmt.Sprintf("%s served HTTP %d in %s", target.String(), public.Status, public.Took.Round(time.Millisecond))
+		v.Summary = fmt.Sprintf(fmtServed, target.String(), public.Status, public.Took.Round(time.Millisecond))
 		if route == nil && live != nil {
 			v.Detail = append(v.Detail, "no route entry for this path; the response came from the relay's normal routing")
 		}
@@ -645,8 +669,8 @@ func diagnoseServer(public httpProbe, history []probeAttempt, live *relayhub.Ser
 			}
 		case !route.Live:
 			v.Summary = "relay returned 404: the route exists but is bound to a closed session"
-			v.Where = "stale route (reconnect race)"
-			v.Actions = []string{"upgrade the relay: route ownership must follow the live session", "restarting the agent rebuilds the route"}
+			v.Where = whereStaleRoute
+			v.Actions = []string{"upgrade the relay: route ownership must follow the live session", actionRestartAgent}
 		default:
 			v.Summary = "relay returned 404 while a live route exists"
 			v.Where = "relay host/base-domain matching, not the tunnel"
@@ -655,8 +679,8 @@ func diagnoseServer(public httpProbe, history []probeAttempt, live *relayhub.Ser
 	case public.Status == http.StatusBadGateway || public.Status == http.StatusServiceUnavailable || public.Status == http.StatusGatewayTimeout:
 		if route != nil && !route.Live {
 			v.Summary = "relay matched a route bound to a closed session"
-			v.Where = "stale route (reconnect race)"
-			v.Actions = []string{"upgrade the relay so routes follow the live session", "restarting the agent rebuilds the route"}
+			v.Where = whereStaleRoute
+			v.Actions = []string{"upgrade the relay so routes follow the live session", actionRestartAgent}
 			break
 		}
 		if live == nil || len(live.Agents) == 0 {
@@ -666,7 +690,7 @@ func diagnoseServer(public httpProbe, history []probeAttempt, live *relayhub.Ser
 			break
 		}
 		v.Summary = "relay matched the route but the tunnel failed"
-		v.Where = "relay → agent stream"
+		v.Where = "relay → agent tunnel"
 		agent := live.Agents[0]
 		if route != nil {
 			for _, a := range live.Agents {
@@ -684,8 +708,8 @@ func diagnoseServer(public httpProbe, history []probeAttempt, live *relayhub.Ser
 		}
 	default:
 		v.Summary = "unexpected public response: " + public.summary()
-		v.Where = "relay or local application"
-		v.Actions = []string{"relay access log for the same path and x-request-id"}
+		v.Where = relayAppOrTunnel
+		v.Actions = []string{actionRelayLog}
 	}
 	if !v.OK {
 		v.Summary += " (" + attemptsNote(history) + ")"
@@ -707,10 +731,10 @@ func fetchRelaySnapshot(global *alaye.Global, token string) ([]relayhub.ServerSn
 		return nil, fmt.Errorf("admin address %q: %w", addr, err)
 	}
 	switch host {
-	case "", "0.0.0.0", "::", "[::]":
-		host = "127.0.0.1"
+	case "", def.RelayBindAny, "::", "[::]":
+		host = def.IPv4LoopbackSAN
 	}
-	raw := "http://" + net.JoinHostPort(host, port) + "/api/v1/relay"
+	raw := def.Http + def.ProtocolSeparator + net.JoinHostPort(host, port) + "/api/v1/relay"
 	req, err := http.NewRequest(http.MethodGet, raw, nil)
 	if err != nil {
 		return nil, err
@@ -718,12 +742,12 @@ func fetchRelaySnapshot(global *alaye.Global, token string) ([]relayhub.ServerSn
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{Timeout: def.RelayStateTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", raw, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s returned HTTP %d", raw, resp.StatusCode)
 	}
@@ -755,9 +779,9 @@ func printRelayState(f *ui.Flow, live *relayhub.ServerSnapshot) {
 	if live == nil {
 		return
 	}
-	state := "stopped"
+	state := def.StateStopped
 	if live.Running {
-		state = "running"
+		state = def.StateRunning
 	}
 	uptime := ""
 	if !live.StartedAt.IsZero() {
@@ -776,7 +800,7 @@ func printRelayState(f *ui.Flow, live *relayhub.ServerSnapshot) {
 		f.Info(line)
 	}
 	for _, r := range live.Routes {
-		state := "live"
+		state := stateLive
 		if !r.Live {
 			state = "DEAD"
 		}
@@ -808,7 +832,7 @@ func routeForPath(live *relayhub.ServerSnapshot, path string) *relayhub.RouteSna
 
 func age(t time.Time) string {
 	if t.IsZero() {
-		return "unknown"
+		return stateUnknown
 	}
 	d := time.Since(t)
 	switch {
@@ -841,7 +865,7 @@ func resolveSecret(r *Relay, f *ui.Flow, label, raw string, global *alaye.Global
 		f.Error(label + " is empty")
 		return "", false
 	}
-	if !strings.HasPrefix(raw, "ss://") {
+	if !strings.HasPrefix(raw, def.SecretScheme) {
 		return raw, true
 	}
 	client, err := secrets.NewControlClient(global.Storage.DataDir)
@@ -849,7 +873,7 @@ func resolveSecret(r *Relay, f *ui.Flow, label, raw string, global *alaye.Global
 		f.Warn(label + " is a Keeper reference; running service not reachable to verify")
 		return "", false
 	}
-	key := strings.TrimPrefix(raw, "ss://")
+	key := strings.TrimPrefix(raw, def.SecretScheme)
 	value, err := client.Get(key)
 	if err != nil || value == "" {
 		f.Error(label + " Keeper key " + key + " is missing")

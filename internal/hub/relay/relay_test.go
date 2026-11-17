@@ -78,7 +78,7 @@ func TestServerAgentHTTPPath(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -132,13 +132,13 @@ func TestServerRejectsBadAgentToken(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	conn, err := tls.Dial("tcp", srv.Addr(), &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := writeFrame(conn, hello{Kind: frameControl, Agent: "alice", Token: "wrong"}); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestServerAgentHTTPSubdomain(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -225,7 +225,7 @@ func TestServerAgentTCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close()
+	defer func() { _ = local.Close() }()
 	go func() {
 		for {
 			c, err := local.Accept()
@@ -233,7 +233,7 @@ func TestServerAgentTCP(t *testing.T) {
 				return
 			}
 			go func() {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_, _ = io.Copy(c, c)
 			}()
 		}
@@ -259,7 +259,7 @@ func TestServerAgentTCP(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -305,7 +305,7 @@ func TestServerAgentUDP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close()
+	defer func() { _ = local.Close() }()
 	go func() {
 		buf := make([]byte, 65535)
 		for {
@@ -337,7 +337,7 @@ func TestServerAgentUDP(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -393,13 +393,13 @@ func TestServerEnrollment(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	conn, err := tls.Dial("tcp", srv.Addr(), &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err := conn.Write([]byte(muxMagic)); err != nil {
 		t.Fatal(err)
 	}
@@ -407,12 +407,12 @@ func TestServerEnrollment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mux.Close()
+	defer func() { _ = mux.Close() }()
 	stream, err := mux.OpenStream()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	if err := writeFrame(stream, hello{Kind: frameControl, Agent: "alice", EnrollToken: "enroll-secret"}); err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestClientStoresEnrollmentCredential(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	exposes := []alaye.Expose{{
 		ID:        "hello",

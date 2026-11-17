@@ -81,7 +81,7 @@ func TestAgentTakesOverExposureAfterReconnect(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -177,7 +177,7 @@ func TestClientHeartbeatsControlConn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	type result struct {
 		pings   int
@@ -191,7 +191,7 @@ func TestClientHeartbeatsControlConn(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		magic := make([]byte, len(muxMagic))
 		if _, err := io.ReadFull(conn, magic); err != nil || string(magic) != muxMagic {
@@ -201,7 +201,7 @@ func TestClientHeartbeatsControlConn(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer mux.Close()
+		defer func() { _ = mux.Close() }()
 		conn, err = mux.AcceptStream()
 		if err != nil {
 			return

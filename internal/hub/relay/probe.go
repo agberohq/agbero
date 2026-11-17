@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // ProbeAuth validates an agent's enrollment token or credential against a
@@ -21,23 +23,23 @@ func ProbeAuth(ctx context.Context, relayURL, agent, enrollToken, credential str
 func ProbeSession(ctx context.Context, relayURL, agent, enrollToken, credential string, insecure bool) (*SessionReport, error) {
 	u, err := url.Parse(relayURL)
 	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("invalid relay URL")
+		return nil, fmt.Errorf(def.ErrRelayURL)
 	}
 	host := u.Host
 	if !strings.Contains(host, ":") {
-		host += ":443"
+		host += ":" + def.RelayDefaultPort
 	}
 	d := &tls.Dialer{Config: &tls.Config{
 		ServerName:         u.Hostname(),
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: insecure,
 	}}
-	conn, err := d.DialContext(ctx, "tcp", host)
+	conn, err := d.DialContext(ctx, def.TCP, host)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(def.RelayAuthTimeout))
 	if err := writeFrame(conn, hello{
 		Kind: frameCheck, Agent: agent, Token: credential, EnrollToken: enrollToken,
 	}); err != nil {
@@ -49,7 +51,7 @@ func ProbeSession(ctx context.Context, relayURL, agent, enrollToken, credential 
 	}
 	if !a.OK {
 		if a.Error == "" {
-			a.Error = "authentication failed"
+			a.Error = def.ErrRelayAuth
 		}
 		return nil, fmt.Errorf("%s", a.Error)
 	}

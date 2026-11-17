@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"time"
-)
 
-const maxFrameSize = 64 << 10
+	"github.com/agberohq/agbero/internal/core/def"
+)
 
 type frameKind string
 
@@ -20,11 +19,6 @@ const (
 	framePing         frameKind = "ping"
 	frameWork         frameKind = "work"
 )
-
-// controlHeartbeat is the interval advertised to agents for control-channel
-// pings. Idle control connections are otherwise torn down by NATs and
-// firewalls that drop flows without payload traffic.
-const controlHeartbeat = 25 * time.Second
 
 type hello struct {
 	Kind        frameKind `json:"kind"`
@@ -80,7 +74,7 @@ func writeFrame(w io.Writer, v any) error {
 	if err != nil {
 		return err
 	}
-	if len(data) > maxFrameSize {
+	if len(data) > def.RelayMaxFrameBytes {
 		return fmt.Errorf("relay: frame too large")
 	}
 	var hdr [4]byte
@@ -98,7 +92,7 @@ func readFrame(r io.Reader, v any) error {
 		return err
 	}
 	n := binary.BigEndian.Uint32(hdr[:])
-	if n == 0 || n > maxFrameSize {
+	if n == 0 || n > def.RelayMaxFrameBytes {
 		return fmt.Errorf("relay: invalid frame size %d", n)
 	}
 	data := make([]byte, n)

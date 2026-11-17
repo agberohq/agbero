@@ -11,16 +11,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/oshodi"
 )
 
 const (
-	agentsBucket = "relay_agents"
-	claimsBucket = "relay_claims"
+	agentsBucket = def.RelayAgentsBucket
+	claimsBucket = def.RelayClaimsBucket
 )
 
 var (
-	errAuth      = errors.New("authentication failed")
+	errAuth      = errors.New(def.ErrRelayAuth)
 	errRevoked   = errors.New("agent revoked")
 	errMaxAgents = errors.New("max agents reached")
 )
@@ -98,21 +99,9 @@ func (s *agentStore) put(rec *agentRecord) {
 	}
 }
 
-func (s *agentStore) activeCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, rec := range s.records {
-		if rec.Status == "active" {
-			n++
-		}
-	}
-	return n
-}
-
 func (s *agentStore) verifyCredential(id, credential string) bool {
 	rec, ok := s.get(id)
-	if !ok || rec.Status != "active" || credential == "" {
+	if !ok || rec.Status != def.AgentStatusActive || credential == "" {
 		return false
 	}
 	sum := sha256.Sum256([]byte(credential))
@@ -127,20 +116,20 @@ func (s *agentStore) enroll(id, enrollToken, expectedToken string, maxAgents int
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec := s.records[id]
-	if rec != nil && rec.Status == "revoked" {
+	if rec != nil && rec.Status == def.AgentStatusRevoked {
 		return "", errRevoked
 	}
 	if rec == nil {
 		active := 0
 		for _, r := range s.records {
-			if r.Status == "active" {
+			if r.Status == def.AgentStatusActive {
 				active++
 			}
 		}
 		if maxAgents > 0 && active >= maxAgents {
 			return "", errMaxAgents
 		}
-		rec = &agentRecord{ID: id, Status: "active", CreatedAt: time.Now().UTC()}
+		rec = &agentRecord{ID: id, Status: def.AgentStatusActive, CreatedAt: time.Now().UTC()}
 		s.records[id] = rec
 	}
 	credential, err := newCredential()
@@ -149,7 +138,7 @@ func (s *agentStore) enroll(id, enrollToken, expectedToken string, maxAgents int
 	}
 	sum := sha256.Sum256([]byte(credential))
 	rec.CredentialHash = hex.EncodeToString(sum[:])
-	rec.Status = "active"
+	rec.Status = def.AgentStatusActive
 	rec.LastSeen = time.Now().UTC()
 	if s.agents != nil {
 		if data, err := json.Marshal(rec); err == nil {

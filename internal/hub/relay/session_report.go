@@ -4,10 +4,9 @@ import (
 	"net"
 	"sort"
 	"time"
-)
 
-// sessionHistoryLimit bounds the per-agent event log kept for diagnostics.
-const sessionHistoryLimit = 32
+	"github.com/agberohq/agbero/internal/core/def"
+)
 
 // SessionEvent is one entry of an agent's recent session history on the relay.
 // The history is what lets a remote doctor tell a stable session from one that
@@ -39,7 +38,7 @@ func (s *Server) recordEventLocked(agent string, ev SessionEvent) {
 		ev.At = time.Now().UTC()
 	}
 	h := s.history[agent]
-	if n := len(h); n > 0 && ev.Kind == "proxy_error" {
+	if n := len(h); n > 0 && ev.Kind == def.RelayEventProxyError {
 		last := &h[n-1]
 		if last.Kind == ev.Kind && last.Reason == ev.Reason && last.Remote == ev.Remote {
 			if last.Count == 0 {
@@ -51,8 +50,8 @@ func (s *Server) recordEventLocked(agent string, ev SessionEvent) {
 		}
 	}
 	h = append(h, ev)
-	if len(h) > sessionHistoryLimit {
-		h = h[len(h)-sessionHistoryLimit:]
+	if len(h) > def.RelaySessionHistory {
+		h = h[len(h)-def.RelaySessionHistory:]
 	}
 	s.history[agent] = h
 }
@@ -104,7 +103,7 @@ func (r *SessionReport) RemoteHosts() []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, ev := range r.History {
-		if ev.Kind != "opened" || ev.Remote == "" {
+		if ev.Kind != def.RelayEventOpened || ev.Remote == "" {
 			continue
 		}
 		host := ev.Remote
