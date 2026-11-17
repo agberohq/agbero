@@ -75,6 +75,7 @@ type Server struct {
 	lastErrorAt time.Time
 	lastAuth    *AuthFailure
 	reconnects  map[string]int64
+	historyMu   sync.Mutex
 	history     map[string][]SessionEvent
 
 	store  *oshodi.Bucket

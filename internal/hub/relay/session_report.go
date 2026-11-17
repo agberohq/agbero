@@ -32,8 +32,12 @@ type SessionReport struct {
 
 // recordEventLocked appends to the agent's history. Repeated proxy errors with
 // the same reason are folded into one entry so a burst does not push the
-// session events out. Callers must hold s.mu.
+// session events out. It has its own lock: proxy errors arrive on the request
+// path, and an outage must not serialise every request on s.mu. Safe to call
+// with or without s.mu held.
 func (s *Server) recordEventLocked(agent string, ev SessionEvent) {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
 	if ev.At.IsZero() {
 		ev.At = time.Now().UTC()
 	}
@@ -57,9 +61,7 @@ func (s *Server) recordEventLocked(agent string, ev SessionEvent) {
 }
 
 func (s *Server) recordEvent(agent string, ev SessionEvent) {
-	s.mu.Lock()
 	s.recordEventLocked(agent, ev)
-	s.mu.Unlock()
 }
 
 // sessionReport builds the relay's view of one agent.
@@ -90,7 +92,9 @@ func (s *Server) sessionReport(agent string) *SessionReport {
 		})
 	}
 	sort.Slice(out.Routes, func(i, j int) bool { return out.Routes[i].Key < out.Routes[j].Key })
+	s.historyMu.Lock()
 	out.History = append([]SessionEvent(nil), s.history[agent]...)
+	s.historyMu.Unlock()
 	return out
 }
 
