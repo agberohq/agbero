@@ -11,8 +11,13 @@ func TestQRTerminalANSIHasNoImageProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := q.Result(4)
-	if r.ANSI == "" || !strings.Contains(r.ANSI, "\x1b[30;47m") {
+	if r.ANSI == "" || !strings.Contains(r.ANSI, qrInk+qrPaper) {
 		t.Fatal("ANSI QR missing colors")
+	}
+	// Palette colors are remapped by terminal themes and can make the code
+	// unscannable; only fixed cube colors are allowed.
+	if strings.Contains(r.ANSI, "\x1b[30;47m") || strings.Contains(r.ANSI, "\x1b[47m") {
+		t.Fatal("ANSI QR uses themeable palette colors")
 	}
 	if strings.Contains(r.ANSI, "\x1b[?") || strings.Contains(r.ANSI, "\x1b_G") {
 		t.Fatal("ANSI QR contains a terminal-image protocol query")

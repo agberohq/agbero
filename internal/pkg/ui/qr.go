@@ -65,15 +65,24 @@ func (q *QR) Result(scale int) *QRResult {
 	}
 }
 
-// terminalANSI renders a black-on-white QR with explicit ANSI colors, so no
-// capability query is sent and the terminal theme cannot invert it.
+// qrInk and qrPaper are fixed 256-color cube entries (16 = #000000,
+// 231 = #ffffff). The basic palette codes 30/47 are remapped by terminal
+// themes (often to two greys), which leaves the code too low-contrast for a
+// phone camera; cube colors are not themeable.
+const (
+	qrInk   = "\x1b[38;5;16m"
+	qrPaper = "\x1b[48;5;231m"
+)
+
+// terminalANSI renders a black-on-white QR with explicit, theme-independent
+// colors, so no capability query is sent and the terminal theme cannot dim or
+// invert it.
 func (q *QR) terminalANSI() string {
 	size := q.code.Size
 	total := size + quietZone*2
 	var b strings.Builder
-	b.WriteString("\x1b[30;47m") // black foreground, white background
 	for row := 0; row < total; row += 2 {
-		b.WriteString("\x1b[47m")
+		b.WriteString(qrInk + qrPaper)
 		for col := 0; col < total; col++ {
 			top := q.safeBlack(col-quietZone, row-quietZone)
 			bot := q.safeBlack(col-quietZone, row-quietZone+1)
