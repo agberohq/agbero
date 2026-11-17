@@ -561,6 +561,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
     });
 
     on('#mapFitBtn',   'click', () => graph?.fit());
+    on('#mapBusyBtn',  'click', () => graph?.focusBusiest?.());
     on('#mapZoomIn',   'click', () => graph?.zoomBy(1.25));
     on('#mapZoomOut',  'click', () => graph?.zoomBy(0.8));
 
